@@ -1,0 +1,7 @@
+<launch>
+    <arg name="drone_id" default="0"/>
+
+    <node pkg="px4_bridge" name="q_sim" type="q_sim.py" output="screen">
+        <remap from="~thrust_rates" to="/track/thrust_rates" />
+    </node>
+</launch>

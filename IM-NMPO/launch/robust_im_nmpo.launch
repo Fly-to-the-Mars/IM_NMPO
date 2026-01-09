@@ -1,0 +1,20 @@
+<launch>
+    <param name="ctrl_flag" value="1" />
+    <param name="imc_wsin" value="[0.1, 0.2, 0.2]" />
+
+    <node pkg="im_nmpo" name="track" type="track.py" output="screen">
+        <remap from="~odom" to="/q_sim/odom" />
+        <remap from="~track_traj" to="/optimal_traj/track_traj" />
+    </node>
+
+    <node pkg="im_nmpo" name="optimal_traj" type="optimal_traj.py" output="screen">
+        <remap from="~gates" to="/waypoint_pub/gates" />
+    </node>
+    
+    <node pkg="im_nmpo" name="waypoint_pub" type="waypoint_pub.py" output="screen">
+        <remap from="~odom" to="/q_sim/odom" />
+    </node>
+
+    <include file="$(find px4_bridge)/launch/q_sim.launch"/>
+    <include file="$(find px4_bridge)/launch/q_visual.launch"/>
+</launch>

@@ -1,0 +1,4 @@
+<launch>
+    <param name="robot_description" textfile="$(find px4_bridge)/urdf/px4-vision_asm.urdf" />
+    <node name="rviz" pkg="rviz" type="rviz" args="-d $(find px4_bridge)/config/rviz.rviz" required="true" />
+</launch> 
