@@ -1,10 +1,10 @@
 # Robust Optimal Planning and Control for Agile Flight of Quadrotors: An Internal Model-Based Nonlinear Model Predictive Optimization Approach
 
-<div align="center">
+<p align="center">
   <img src="IM-NMPO/fig/Framework_review.png" width="60%" alt="IM-NMPO Framework">
-  <br>
-  <em>Figure 1: (A) IM-NMPO framework. (B) Simulation and real-world experiments encompassing various disturbances, including unknown payloads, unknown persistent fan-induced and time-varying gusts, across quadrotors with different wheelbases (450mm, 330mm, and 250mm).</em>
-</div>
+</p>
+
+<em>Figure 1: (A) IM-NMPO framework. (B) Simulation and real-world experiments encompassing various disturbances, including unknown payloads, unknown persistent fan-induced and time-varying gusts, across quadrotors with different wheelbases (450mm, 330mm, and 250mm).</em>
 
 ## Instructions
 1. Install ros noetic
