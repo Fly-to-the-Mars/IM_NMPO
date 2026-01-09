@@ -1,5 +1,6 @@
 # Robust Optimal Planning and Control for Agile Flight of Quadrotors: An Internal Model-Based Nonlinear Model Predictive Optimization Approach
 
+![Framework](IM-NMPO/fig/Framework_review.png)
 
 ## Instructions
 1. Install ros noetic
@@ -12,4 +13,3 @@
 This will run the time-optimal planning and tracking in the simulation.
 
 
-   
