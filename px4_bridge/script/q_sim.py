@@ -86,9 +86,13 @@ def sim_run(e):
         u[2] = delay_wy.update(thrust_rates_msg.wy)
         u[3] = delay_wz.update(thrust_rates_msg.wz)
 
-        u[1] += wind_speed_x  # 在wx上叠加风速
-        u[2] += wind_speed_y  # 在wy上叠加风速
-        u[3] += wind_speed_z  # 在wz上叠加风速
+        # u[1] += wind_speed_x  # 
+        # u[2] += wind_speed_y  # 
+        # u[3] += wind_speed_z  # 
+        u[1] += 1  # 
+        u[2] += 1  # 
+        u[3] += 1  # 
+        
         q_sim.step10ms(u)
 
         q_state = q_sim.get_state()
