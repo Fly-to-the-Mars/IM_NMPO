@@ -33,3 +33,6 @@ For the constant torque disturbances: (IM_NMPO_ws\px4_bridge\script\q_sim.py)
         u[1] += 1 
         u[2] += 1 
         u[3] += 1 
+
+Tested Environments:
+        * Ubuntu 20.04 + ROS1 Noetic
