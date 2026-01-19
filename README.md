@@ -19,6 +19,7 @@
 This will execute the robust agile tracking of IM-NMPO under external periodic or constant disturbances, with performance comparison against the NMPC baseline.
 
 For the periodic torque disturbances: (IM_NMPO_ws\px4_bridge\script\q_sim.py)
+
         wind_speed_x = a1 * math.sin(b1 * t + c1)
         wind_speed_y = a2 * math.sin(b2 * t + c2)
         wind_speed_z = a3 * math.sin(b3 * t + c3)
