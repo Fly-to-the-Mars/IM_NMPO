@@ -1,20 +1,37 @@
 <launch>
-    <param name="ctrl_flag" value="1" />
-    <param name="imc_wsin" value="[0.1, 0.2, 0.2]" />
-
+    <!-- Controller and IMC parameters configuration -->
+    <arg name="ctrl_flag" default="1" doc="Controller type: 1 for controller 1, 2 for controller 2"/>
+    <arg name="imc_wsin_x" default="0.1" doc="IMC parameter wsin for x-axis"/>
+    <arg name="imc_wsin_y" default="0.2" doc="IMC parameter wsin for y-axis"/>
+    <arg name="imc_wsin_z" default="0.2" doc="IMC parameter wsin for z-axis"/>
+    <arg name="plot_trajectory" default="true" doc="Whether to plot trajectory after shutdown"/>
+    
+    <!-- Trajectory tracking node with configurable parameters -->
     <node pkg="im_nmpo" name="track" type="track.py" output="screen">
         <remap from="~odom" to="/q_sim/odom" />
         <remap from="~track_traj" to="/optimal_traj/track_traj" />
+        
+        <!-- Controller selection parameter -->
+        <param name="ctrl_flag" value="$(arg ctrl_flag)" />
+        
+        <!-- IMC parameters as a list -->
+        <param name="imc_wsin" value="[$(arg imc_wsin_x), $(arg imc_wsin_y), $(arg imc_wsin_z)]" />
+        
+        <!-- Plot trajectory setting -->
+        <param name="plot_trajectory" value="$(arg plot_trajectory)" />
     </node>
 
+    <!-- Optimal trajectory generation node -->
     <node pkg="im_nmpo" name="optimal_traj" type="optimal_traj.py" output="screen">
         <remap from="~gates" to="/waypoint_pub/gates" />
     </node>
     
+    <!-- Waypoint publisher node -->
     <node pkg="im_nmpo" name="waypoint_pub" type="waypoint_pub.py" output="screen">
         <remap from="~odom" to="/q_sim/odom" />
     </node>
 
+    <!-- Simulation and visualization -->
     <include file="$(find px4_bridge)/launch/q_sim.launch"/>
     <include file="$(find px4_bridge)/launch/q_visual.launch"/>
 </launch>

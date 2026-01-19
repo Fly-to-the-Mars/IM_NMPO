@@ -9,6 +9,7 @@ import matplotlib.pyplot as plt
 from dataclasses import dataclass
 from typing import Optional, Tuple, List, Dict
 from collections import deque
+import ast  # 用于安全地解析字符串为Python对象
 
 # ROS messages
 from im_nmpo.msg import TrackTraj
@@ -69,10 +70,19 @@ class TrajectoryTrackerNode:
     def __init__(self):
         rospy.init_node("trajectory_tracker")
         
-        # Parameter configuration
-        self.ctrl_flag = rospy.get_param("~ctrl_flag", 2)  # Default to controller 1
-        self.publish_rate = rospy.get_param("~publish_rate", 50)  # Hz
-        self.tracking_horizon = rospy.get_param("~tracking_horizon", 10)
+        # Parameter configuration with better error handling
+        self.ctrl_flag = self._get_param_with_default("~ctrl_flag", 1)  # Default to controller 1
+        self.publish_rate = self._get_param_with_default("~publish_rate", 50)  # Hz
+        self.tracking_horizon = self._get_param_with_default("~tracking_horizon", 10)
+        self.plot_trajectory = self._get_param_with_default("~plot_trajectory", True)
+        
+        # Get IMC parameters safely
+        imc_wsin_str = self._get_param_with_default("~imc_wsin", "[0.1, 0.2, 0.2]")
+        imc_wsin = self._safe_parse_list_param(imc_wsin_str, [0.1, 0.2, 0.2])
+        
+        # Log current configuration
+        rospy.loginfo(f"Controller configuration: ctrl_flag={self.ctrl_flag}")
+        rospy.loginfo(f"IMC parameters: wsin={imc_wsin}")
         
         # Model initialization
         self.quad_1 = QuadrotorModel_nominal(BASEPATH + 'quad/quad_real.yaml')
@@ -82,7 +92,7 @@ class TrajectoryTrackerNode:
         self._init_controller()
         
         # Compensator initialization
-        self._init_compensators()
+        self._init_compensators(imc_wsin)
         
         # State variables
         self.current_state: Optional[QuadrotorState] = None
@@ -99,11 +109,45 @@ class TrajectoryTrackerNode:
         # ROS publishers/subscribers
         self._setup_ros_communications()
         
-        # Register exit handler to plot errors when program is killed
-        atexit.register(self._plot_errors_on_exit)
+        # Trajectory data storage
+        self.r_x = []  # Actual x positions
+        self.r_y = []  # Actual y positions
+        self.ref_traj_x = []  # Reference trajectory x positions
+        self.ref_traj_y = []  # Reference trajectory y positions
+        
+        # Register cleanup function
+        atexit.register(self._plot_trajectory)
+        rospy.on_shutdown(self._plot_trajectory)
         
         rospy.loginfo("Trajectory tracking node started, using controller type: %d", self.ctrl_flag)
-        
+    
+    def _get_param_with_default(self, param_name, default_value):
+        """Safely get parameter with default value"""
+        try:
+            value = rospy.get_param(param_name, default_value)
+            rospy.logdebug(f"Parameter {param_name} = {value}")
+            return value
+        except Exception as e:
+            rospy.logwarn(f"Failed to get parameter {param_name}: {e}, using default: {default_value}")
+            return default_value
+    
+    def _safe_parse_list_param(self, param_str, default_value):
+        """Safely parse list parameter from string"""
+        try:
+            # Remove any extra whitespace
+            param_str = param_str.strip()
+            # Use ast.literal_eval for safe evaluation
+            parsed_value = ast.literal_eval(param_str)
+            # Ensure it's a list and convert to numpy array
+            if isinstance(parsed_value, (list, tuple)):
+                return np.array(parsed_value, dtype=float)
+            else:
+                rospy.logwarn(f"Parameter is not a list/tuple: {param_str}, using default")
+                return np.array(default_value, dtype=float)
+        except Exception as e:
+            rospy.logwarn(f"Failed to parse parameter: {param_str}, error: {e}, using default")
+            return np.array(default_value, dtype=float)
+    
     def _init_controller(self):
         """Initialize controller"""
         if self.ctrl_flag == 1:
@@ -121,16 +165,15 @@ class TrajectoryTrackerNode:
             self.ctrl_flag = 1
             self.tracker = TrackerPos_1(self.quad_1)
     
-    def _init_compensators(self):
-        """Initialize compensators"""
+    def _init_compensators(self, imc_wsin):
+        """Initialize compensators with given IMC parameters"""
         if self.ctrl_flag == 1:
-            # Internal Model Compensator parameters (configurable)
-            wsin = np.array(rospy.get_param("~imc_wsin", [0.1, 0.2, 0.2]))
-            self.imc_compensator = InnerModelCompensator(wsin, self.quad_1._J)
+            # Internal Model Compensator with configurable parameters
+            self.imc_compensator = InnerModelCompensator(imc_wsin, self.quad_1._J)
             
             # Adaptive Feedback Compensator
             self.adaptive_compensator = AdaptiveFeedbackCompensator(self.quad_1._J)
-            rospy.loginfo("Compensators initialized")
+            rospy.loginfo(f"Compensators initialized with wsin={imc_wsin}")
     
     def _setup_ros_communications(self):
         """Setup ROS communications"""
@@ -141,9 +184,6 @@ class TrajectoryTrackerNode:
             queue_size=1, 
             tcp_nodelay=True
         )
-        
-        # Optional debugging service
-        # self.service = rospy.Service('~reset_tracker', ResetTracker, self.handle_reset)
         
         # Subscribers
         rospy.Subscriber(
@@ -177,6 +217,10 @@ class TrajectoryTrackerNode:
             self.current_state = QuadrotorState.from_odometry(msg)
             self.message_count += 1
             
+            # Store actual trajectory points
+            self.r_x.append(msg.pose.pose.position.x)
+            self.r_y.append(msg.pose.pose.position.y)
+            
             # Only perform tracking when trajectory is ready
             if self.trajectory_ready and self.current_state is not None:
                 control_msg = self._compute_control()
@@ -203,6 +247,9 @@ class TrajectoryTrackerNode:
             self._load_trajectory(msg)
             self.trajectory_ready = True
             rospy.loginfo("New trajectory loaded, total %d trajectory points", len(msg.dt))
+            
+            # Store reference trajectory for plotting
+            self._store_reference_trajectory()
         except Exception as e:
             rospy.logerr("Failed to load trajectory: %s", str(e))
     
@@ -233,6 +280,13 @@ class TrajectoryTrackerNode:
             np.array(angular_list),
             np.array(dt_list)
         )
+    
+    def _store_reference_trajectory(self):
+        """Store reference trajectory for plotting"""
+        if hasattr(self.trajectory, '_pos') and self.trajectory._pos is not None:
+            self.ref_traj_x = self.trajectory._pos[:, 0].tolist()
+            self.ref_traj_y = self.trajectory._pos[:, 1].tolist()
+            rospy.loginfo("Stored reference trajectory with %d points", len(self.ref_traj_x))
     
     def _compute_control(self) -> Optional[ThrustRates]:
         """Compute control command"""
@@ -299,9 +353,6 @@ class TrajectoryTrackerNode:
         control_msg.wy = float(tau_final[1])
         control_msg.wz = float(tau_final[2])
         
-        # Record tracking error
-        self._record_tracking_error(x0[:3], trjp[0] if len(trjp) > 0 else None)
-        
         return control_msg
     
     def _compute_control_type2(self, x0: np.ndarray) -> ThrustRates:
@@ -329,115 +380,76 @@ class TrajectoryTrackerNode:
         control_msg.wy = float(x[11])
         control_msg.wz = float(x[12])
         
-        # Record tracking error
-        self._record_tracking_error(x0[:3], trjp[0] if len(trjp) > 0 else None)
-        
         return control_msg
     
-    def _record_tracking_error(self, actual_pos: np.ndarray, 
-                              target_pos: Optional[np.ndarray]):
-        """Record tracking error"""
-        if target_pos is not None:
-            error = np.linalg.norm(actual_pos - target_pos)
-            self.tracking_errors.append(error)
-    
     def _log_performance(self):
-        """Log performance statistics"""
-        if self.computation_times:
-            avg_comp_time = np.mean(self.computation_times)
-            max_comp_time = np.max(self.computation_times)
-            rospy.logdebug("Average computation time: %.4f ms, Max: %.4f ms", 
-                          avg_comp_time * 1000, max_comp_time * 1000)
-        
-        if self.tracking_errors:
-            avg_error = np.mean(self.tracking_errors)
-            rospy.logdebug("Average tracking error: %.4f m", avg_error)
+        """Log performance metrics"""
+        if len(self.computation_times) > 0:
+            avg_time = np.mean(self.computation_times)
+            max_time = np.max(self.computation_times)
+            rospy.loginfo("Computation time - Avg: %.4fs, Max: %.4fs", avg_time, max_time)
     
-    def _plot_errors_on_exit(self):
-        """Plot error curves when the program is killed"""
-        if len(self.tracking_errors) > 0:
-            try:
-                print("\n" + "="*50)
-                print("Plotting tracking error statistics...")
-                print("="*50)
+    def _plot_trajectory(self):
+        """Plot and save trajectory"""
+        if not self.plot_trajectory:
+            return
+            
+        try:
+            if len(self.r_x) > 0 and len(self.ref_traj_x) > 0:
+                # Create figure
+                plt.figure(figsize=(10, 8))
                 
-                # Create figure with multiple subplots
-                fig, axes = plt.subplots(2, 2, figsize=(12, 8))
+                # Plot reference trajectory
+                plt.plot(self.ref_traj_x, self.ref_traj_y, 'b-', linewidth=2, 
+                        label='Reference Trajectory', alpha=0.7)
                 
-                # Plot 1: Tracking error over time
-                axes[0, 0].plot(list(self.tracking_errors), 'b-', linewidth=2)
-                axes[0, 0].set_title('Tracking Error Over Time')
-                axes[0, 0].set_xlabel('Sample Number')
-                axes[0, 0].set_ylabel('Error (m)')
-                axes[0, 0].grid(True)
+                # Plot actual trajectory
+                plt.plot(self.r_x, self.r_y, 'r-', linewidth=1.5, 
+                        label='Actual Trajectory', alpha=0.8)
                 
-                # Plot 2: Error histogram
-                axes[0, 1].hist(list(self.tracking_errors), bins=50, alpha=0.7, color='blue', edgecolor='black')
-                axes[0, 1].set_title('Tracking Error Distribution')
-                axes[0, 1].set_xlabel('Error (m)')
-                axes[0, 1].set_ylabel('Frequency')
-                axes[0, 1].grid(True, alpha=0.3)
+                # Add start and end markers
+                if len(self.r_x) > 0:
+                    plt.scatter(self.r_x[0], self.r_y[0], c='green', s=100, 
+                              marker='o', label='Start', zorder=5)
+                    plt.scatter(self.r_x[-1], self.r_y[-1], c='red', s=100, 
+                              marker='s', label='End', zorder=5)
                 
-                # Plot 3: Computation time
-                if len(self.computation_times) > 0:
-                    axes[1, 0].plot([t * 1000 for t in self.computation_times], 'r-', linewidth=2)
-                    axes[1, 0].set_title('Computation Time Over Time')
-                    axes[1, 0].set_xlabel('Sample Number')
-                    axes[1, 0].set_ylabel('Time (ms)')
-                    axes[1, 0].grid(True)
+                # Plot settings
+                plt.xlabel('X Position (m)', fontsize=12)
+                plt.ylabel('Y Position (m)', fontsize=12)
+                plt.title('Trajectory Tracking Performance', fontsize=14, fontweight='bold')
+                plt.grid(True, alpha=0.3)
+                plt.legend(loc='best')
+                plt.axis('equal')
                 
-                # Plot 4: Statistics
-                axes[1, 1].axis('off')
-                
-                # Calculate statistics
-                errors = list(self.tracking_errors)
-                avg_error = np.mean(errors)
-                max_error = np.max(errors)
-                min_error = np.min(errors)
-                std_error = np.std(errors)
-                
-                stats_text = f'Tracking Error Statistics:\n\n'
-                stats_text += f'Average Error: {avg_error:.4f} m\n'
-                stats_text += f'Maximum Error: {max_error:.4f} m\n'
-                stats_text += f'Minimum Error: {min_error:.4f} m\n'
-                stats_text += f'Standard Deviation: {std_error:.4f} m\n'
-                stats_text += f'Total Samples: {len(errors)}\n\n'
-                
-                if len(self.computation_times) > 0:
-                    comp_times = list(self.computation_times)
-                    avg_comp_time = np.mean(comp_times) * 1000
-                    max_comp_time = np.max(comp_times) * 1000
-                    stats_text += f'Average Comp Time: {avg_comp_time:.2f} ms\n'
-                    stats_text += f'Max Comp Time: {max_comp_time:.2f} ms\n'
-                
-                axes[1, 1].text(0.05, 0.95, stats_text, transform=axes[1, 1].transAxes,
-                               verticalalignment='top', fontsize=10,
-                               bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
-                
-                plt.suptitle(f'Trajectory Tracking Performance (Controller Type: {self.ctrl_flag})', fontsize=14)
-                plt.tight_layout()
-                
-                # Save plot to file
-                import time
-                timestamp = time.strftime("%Y%m%d_%H%M%S")
-                filename = f"tracking_error_plot_{timestamp}.png"
-                plt.savefig(filename, dpi=150, bbox_inches='tight')
-                print(f"Plot saved to: {filename}")
+                # Save figure
+                timestamp = rospy.Time.now().to_sec()
+                save_path = f'/tmp/trajectory_plot_{timestamp:.0f}.png'
+                plt.savefig(save_path, dpi=300, bbox_inches='tight')
+                rospy.loginfo(f"Trajectory plot saved to: {save_path}")
                 
                 # Show plot
                 plt.show()
                 
-                print("\nSummary Statistics:")
-                print(f"  Average tracking error: {avg_error:.4f} m")
-                print(f"  Maximum tracking error: {max_error:.4f} m")
-                print(f"  Minimum tracking error: {min_error:.4f} m")
-                print(f"  Error standard deviation: {std_error:.4f} m")
-                print(f"  Total error samples: {len(errors)}")
+            elif len(self.r_x) > 0:
+                rospy.logwarn("Only actual trajectory available for plotting")
+                plt.figure(figsize=(10, 8))
+                plt.plot(self.r_x, self.r_y, 'r-', linewidth=1.5, label='Actual Trajectory')
+                if len(self.r_x) > 0:
+                    plt.scatter(self.r_x[0], self.r_y[0], c='green', s=100, marker='o', label='Start')
+                    plt.scatter(self.r_x[-1], self.r_y[-1], c='red', s=100, marker='s', label='End')
+                plt.xlabel('X Position (m)', fontsize=12)
+                plt.ylabel('Y Position (m)', fontsize=12)
+                plt.title('Actual Trajectory', fontsize=14, fontweight='bold')
+                plt.grid(True, alpha=0.3)
+                plt.legend(loc='best')
+                plt.axis('equal')
+                plt.show()
+            else:
+                rospy.logwarn("No trajectory data to plot")
                 
-            except Exception as e:
-                print(f"Error while plotting: {str(e)}")
-        else:
-            print("No tracking error data to plot.")
+        except Exception as e:
+            rospy.logerr(f"Error plotting trajectory: {str(e)}")
     
     def run(self):
         """Run the node"""
