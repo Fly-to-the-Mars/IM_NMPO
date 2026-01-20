@@ -15,9 +15,7 @@
 6. Run the example with `roslaunch im_nmpo robust_im_nmpo.launch` for the proposed IM-NMPO
 7. Run the example with `roslaunch im_nmpo robust_im_nmpo.launch ctrl_flag:=2` for the compared NMPC
 
-Tested Environments:
-
-        * Ubuntu 20.04 + ROS1 Noetic
+Tested Environments:  Ubuntu 20.04 + ROS1 Noetic
 
 This will execute the robust agile tracking of IM-NMPO under external periodic or constant disturbances, with performance comparison against the NMPC baseline.
 
@@ -31,12 +29,12 @@ For the periodic torque disturbances: (IM_NMPO_ws\px4_bridge\script\q_sim.py)
         u[2] += wind_speed_y 
         u[3] += wind_speed_z 
 
-Trajectory tracking result subject to periodic external disturbances:
+Trajectory tracking results subject to periodic external disturbances:
 
 <p align="center">
-  <img src="IM-NMPO/fig/tracking_peridicdisturbance.png" width="90%" alt="The proposed IM-NMPO (Left) VS. NMPC Baseline (Right)">
+  <img src="IM-NMPO/fig/tracking_peridicdisturbance.png" width="90%" alt="The proposed IM-NMPO (Left) VS. the NMPC Baseline (Right)">
   <br>
-  <em>Figure 2: The proposed IM-NMPO (Left) VS. NMPC Baseline (Right).</em>
+  <em>Figure 2: The proposed IM-NMPO (Left) VS.  the NMPC Baseline (Right).</em>
 </p>
  
 For the constant torque disturbances: (IM_NMPO_ws\px4_bridge\script\q_sim.py)
@@ -45,12 +43,12 @@ For the constant torque disturbances: (IM_NMPO_ws\px4_bridge\script\q_sim.py)
         u[2] += 1 
         u[3] += 1 
 
-Trajectory tracking result subject to constant external disturbances:
+Trajectory tracking results subject to constant external disturbances:
 
 <p align="center">
-  <img src="IM-NMPO/fig/tracking_constantdisturbance.png" width="90%" alt="The proposed IM-NMPO (Left) VS. NMPC Baseline (Right)">
+  <img src="IM-NMPO/fig/tracking_constantdisturbance.png" width="90%" alt="The proposed IM-NMPO (Left) VS. the NMPC Baseline (Right)">
   <br>
-  <em>Figure 3: The proposed IM-NMPO (Left) VS. NMPC Baseline (Right).</em>
+  <em>Figure 3: The proposed IM-NMPO (Left) VS. the NMPC Baseline (Right).</em>
 </p>
 
 
