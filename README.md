@@ -35,8 +35,9 @@ Trajectory tracking result subject to periodic external disturbances:
 
 <p align="center">
   <img src="IM-NMPO/fig/tracking_peridicdisturbance.png" width="90%" alt="The proposed IM-NMPO (Left) VS. NMPC Baseline (Right)">
+  <br>
+  <em>Figure 2: The proposed IM-NMPO (Left) VS. NMPC Baseline (Right).</em>
 </p>
-<em>Figure 2: The proposed IM-NMPO (Left) VS. NMPC Baseline (Right).</em>
  
 For the constant torque disturbances: (IM_NMPO_ws\px4_bridge\script\q_sim.py)
 
@@ -48,7 +49,9 @@ Trajectory tracking result subject to constant external disturbances:
 
 <p align="center">
   <img src="IM-NMPO/fig/tracking_constantdisturbance.png" width="90%" alt="The proposed IM-NMPO (Left) VS. NMPC Baseline (Right)">
+  <br>
+  <em>Figure 3: The proposed IM-NMPO (Left) VS. NMPC Baseline (Right).</em>
 </p>
 
-<em>Figure 3: The proposed IM-NMPO (Left) VS. NMPC Baseline (Right).</em>
+
 
