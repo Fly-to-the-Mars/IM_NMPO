@@ -32,6 +32,7 @@ For the periodic torque disturbances: (IM_NMPO_ws\px4_bridge\script\q_sim.py)
         u[3] += wind_speed_z 
 
 Trajectory tracking result subject to periodic external disturbances:
+
 <p align="center">
   <img src="IM-NMPO/fig/tracking_peridicdisturbance.png" width="90%" alt="The proposed IM-NMPO (Left) VS. NMPC Baseline (Right)">
 </p>
