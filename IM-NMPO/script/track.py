@@ -9,7 +9,7 @@ import matplotlib.pyplot as plt
 from dataclasses import dataclass
 from typing import Optional, Tuple, List, Dict
 from collections import deque
-import ast  
+import ast  # 用于安全地解析字符串为Python对象
 
 # ROS messages
 from im_nmpo.msg import TrackTraj
@@ -400,18 +400,18 @@ class TrajectoryTrackerNode:
                 plt.figure(figsize=(10, 8))
                 
                 # Plot reference trajectory
-                plt.plot(self.ref_traj_x, self.ref_traj_y, 'b-', linewidth=2, 
-                        label='Reference Trajectory', alpha=0.7)
+                plt.plot(self.ref_traj_x, self.ref_traj_y, color='#1f77b4', linestyle='-', linewidth=2.5, 
+                        label='Reference Trajectory', alpha=1)
                 
                 # Plot actual trajectory
-                plt.plot(self.r_x, self.r_y, 'r-', linewidth=1.5, 
-                        label='Actual Trajectory', alpha=0.8)
+                plt.plot(self.r_x, self.r_y, color='#ff7f0e', linestyle='-', linewidth=2, 
+                        label='Actual Trajectory', alpha=0.9)
                 
                 # Add start and end markers
                 if len(self.r_x) > 0:
-                    plt.scatter(self.r_x[0], self.r_y[0], c='green', s=100, 
+                    plt.scatter(self.r_x[0], self.r_y[0], c='blue', s=100, 
                               marker='o', label='Start', zorder=5)
-                    plt.scatter(self.r_x[-1], self.r_y[-1], c='red', s=100, 
+                    plt.scatter(self.r_x[-1], self.r_y[-1], c='orange', s=100, 
                               marker='s', label='End', zorder=5)
                 
                 # Plot settings
@@ -436,8 +436,8 @@ class TrajectoryTrackerNode:
                 plt.figure(figsize=(10, 8))
                 plt.plot(self.r_x, self.r_y, 'r-', linewidth=1.5, label='Actual Trajectory')
                 if len(self.r_x) > 0:
-                    plt.scatter(self.r_x[0], self.r_y[0], c='green', s=100, marker='o', label='Start')
-                    plt.scatter(self.r_x[-1], self.r_y[-1], c='red', s=100, marker='s', label='End')
+                    plt.scatter(self.r_x[0], self.r_y[0], c='blue', s=100, marker='o', label='Start')
+                    plt.scatter(self.r_x[-1], self.r_y[-1], c='orange', s=100, marker='s', label='End')
                 plt.xlabel('X Position (m)', fontsize=12)
                 plt.ylabel('Y Position (m)', fontsize=12)
                 plt.title('Actual Trajectory', fontsize=14, fontweight='bold')
