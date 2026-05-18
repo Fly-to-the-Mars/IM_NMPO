@@ -23,6 +23,26 @@ class InnerModelCompensator:
         
         # 上次控制时间
         self.last_time = None
+        self.last_w = None
+        self.last_tau = None  # Last total torque command applied to the plant.
+        self.disturbance_coeff = np.zeros((3, 2))
+        self.disturbance_estimate = np.zeros(3)
+        self.filtered_residual = np.zeros(3)
+        self.adaptation_gain = 25.0
+        self.residual_filter_alpha = 0.35
+        self.low_frequency_injection_gain = 0.9
+        self.low_frequency_threshold = 1.0
+        self.max_compensation = np.array([1.5, 2.5, 1.5])
+
+        self.rate_last_time = None
+        self.rate_disturbance_coeff = np.zeros((3, 2))
+        self.rate_disturbance_estimate = np.zeros(3)
+        self.rate_filtered_sample = np.zeros(3)
+        self.rate_last_compensation = np.zeros(3)
+        self.rate_adaptation_gain = 18.0
+        self.rate_sample_filter_alpha = 0.15
+        self.rate_low_frequency_injection_gain = 0.85
+        self.rate_max_compensation = np.array([2.0, 3.0, 1.0])
         
     def _build_matrices(self):
         """构建内模控制器所需矩阵"""
@@ -92,6 +112,31 @@ class InnerModelCompensator:
         """重置内模状态"""
         self.v_im = np.zeros((6, 1))
         self.last_time = None
+        self.last_w = None
+        self.last_tau = None
+        self.disturbance_coeff = np.zeros((3, 2))
+        self.disturbance_estimate = np.zeros(3)
+        self.filtered_residual = np.zeros(3)
+        self.rate_last_time = None
+        self.rate_disturbance_coeff = np.zeros((3, 2))
+        self.rate_disturbance_estimate = np.zeros(3)
+        self.rate_filtered_sample = np.zeros(3)
+        self.rate_last_compensation = np.zeros(3)
+
+    def set_frequencies(self, wsin, keep_rate_memory=True):
+        """Update IM frequencies used by the oscillator basis."""
+        wsin = np.array(wsin, dtype=float).flatten()
+        if wsin.shape[0] != 3:
+            return
+        if np.allclose(self.wsin, wsin):
+            return
+        self.wsin = wsin
+        self._build_matrices()
+        if keep_rate_memory:
+            self.rate_disturbance_coeff *= 0.7
+        else:
+            self.rate_disturbance_coeff = np.zeros((3, 2))
+            self.rate_disturbance_estimate = np.zeros(3)
         
     def update(self, tau_nominal, w_actual, dt=None):
         """
@@ -134,10 +179,205 @@ class InnerModelCompensator:
         return self.v_im
     
     def get_compensation(self,v_im):
-        """获取内模补偿量 (角速度补偿)"""
-        # 补偿量 = (PSI @ TINV) @ v_im
+        """获取内模补偿扭矩."""
+        # In the paper d_i = -Psi_i T_i^{-1} theta_i and the control input
+        # adds Psi_i T_i^{-1} vartheta_i. When vartheta_i -> theta_i, this
+        # term converges to -d_i.
         compensation = (self.PSI @ self.TINV) @ v_im
         return compensation  # 3x1向量
+
+    def update_rate_internal_model(
+        self,
+        rate_nominal,
+        rate_actual,
+        rate_correction_without_imc=None,
+        current_time=None,
+        compensation_gain=1.0
+    ):
+        """
+        Update an internal model in the angular-rate command channel.
+
+        The paper's rotational compensation is defined in the same channel as
+        the plant input torque. In the legacy simulator interface, however, the
+        matched disturbance is added to the angular-rate command before the
+        low-level PID. This method keeps the same IMP exosystem, but estimates
+        the disturbance in that rate-command channel so the final controller can
+        still use tau_nominal + adaptive_compensation + imc_compensation.
+        """
+        rate_nominal = np.array(rate_nominal, dtype=float).flatten()
+        rate_actual = np.array(rate_actual, dtype=float).flatten()
+        if rate_correction_without_imc is None:
+            rate_correction_without_imc = np.zeros(3)
+        else:
+            rate_correction_without_imc = np.array(
+                rate_correction_without_imc,
+                dtype=float
+            ).flatten()
+
+        if current_time is None:
+            current_time = rospy.Time.now().to_sec()
+
+        if self.rate_last_time is None:
+            dt = 0.02
+        else:
+            dt = max(0.002, min(0.05, current_time - self.rate_last_time))
+
+        applied_imc = compensation_gain * self.rate_last_compensation
+        disturbance_sample = (
+            rate_actual
+            - rate_nominal
+            - rate_correction_without_imc
+            - applied_imc
+        )
+        self.rate_filtered_sample = (
+            self.rate_sample_filter_alpha * self.rate_filtered_sample
+            + (1.0 - self.rate_sample_filter_alpha) * disturbance_sample
+        )
+
+        for i in range(3):
+            if abs(self.wsin[i]) < 1e-6:
+                basis = np.array([1.0, 0.0])
+            else:
+                basis = np.array([
+                    np.sin(self.wsin[i] * current_time),
+                    np.cos(self.wsin[i] * current_time)
+                ])
+
+            disturbance_hat = self.rate_disturbance_coeff[i] @ basis
+            error = self.rate_filtered_sample[i] - disturbance_hat
+            normalizer = 1.0 + basis @ basis
+            self.rate_disturbance_coeff[i] += (
+                self.rate_adaptation_gain * dt * basis * error / normalizer
+            )
+            disturbance_hat = self.rate_disturbance_coeff[i] @ basis
+
+            if abs(self.wsin[i]) < self.low_frequency_threshold:
+                disturbance_hat += self.rate_low_frequency_injection_gain * (
+                    self.rate_filtered_sample[i] - disturbance_hat
+                )
+
+            self.rate_disturbance_estimate[i] = disturbance_hat
+
+        compensation = -np.clip(
+            self.rate_disturbance_estimate,
+            -self.rate_max_compensation,
+            self.rate_max_compensation
+        )
+
+        self.rate_last_time = current_time
+        self.rate_last_compensation = compensation.copy()
+
+        return compensation.reshape(3, 1)
+
+    def _oscillator_state_from_coeff(self, coeff, current_time):
+        """Return six IM states from per-axis sin/cos coefficients."""
+        eta = np.zeros(6)
+        for i in range(3):
+            c_sin, c_cos = coeff[i]
+            if abs(self.wsin[i]) < 1e-6:
+                eta[2 * i] = c_sin
+                eta[2 * i + 1] = c_cos
+            else:
+                phase = self.wsin[i] * current_time
+                eta[2 * i] = c_sin * np.sin(phase) + c_cos * np.cos(phase)
+                eta[2 * i + 1] = c_sin * np.cos(phase) - c_cos * np.sin(phase)
+        return eta
+
+    def get_rate_internal_model_state(self, current_time=None):
+        """
+        Return the six internal-model states used by the rate-channel IMC.
+
+        Components 1, 3 and 5 are the disturbance output estimates for x, y
+        and z. Components 2, 4 and 6 are the quadrature oscillator states.
+        """
+        if current_time is None:
+            current_time = rospy.Time.now().to_sec()
+        return self._oscillator_state_from_coeff(
+            self.rate_disturbance_coeff,
+            current_time
+        )
+
+    def get_rotational_internal_model_state(self, current_time=None):
+        """Return the six internal-model states used by the torque-channel IMC."""
+        if current_time is None:
+            current_time = rospy.Time.now().to_sec()
+        return self._oscillator_state_from_coeff(
+            self.disturbance_coeff,
+            current_time
+        )
+
+    def update_rotational_internal_model(self, tau_without_imc, w_actual, current_time=None, compensation_gain=1.0):
+        """
+        Update the rotational internal model and return torque compensation.
+
+        The residual follows the rotational dynamics:
+            d_tau = J*w_dot + w x Jw - tau_applied
+        and is projected onto the known sinusoidal internal model basis. For
+        very low frequencies, a residual-error injection is used in the
+        observer output so the finite-time simulation does not have to wait
+        for a full low-frequency period before compensation appears.
+        """
+        tau_without_imc = np.array(tau_without_imc, dtype=float).flatten()
+        w_actual = np.array(w_actual, dtype=float).flatten()
+
+        if current_time is None:
+            current_time = rospy.Time.now().to_sec()
+
+        if self.last_time is None or self.last_w is None or self.last_tau is None:
+            compensation = -np.clip(
+                self.disturbance_estimate,
+                -self.max_compensation,
+                self.max_compensation
+            )
+            self.last_time = current_time
+            self.last_w = w_actual.copy()
+            self.last_tau = tau_without_imc + compensation_gain * compensation
+            return compensation.reshape(3, 1)
+
+        dt = max(0.002, min(0.05, current_time - self.last_time))
+        w_dot = (w_actual - self.last_w) / dt
+        w_mid = 0.5 * (self.last_w + w_actual)
+        sample_time = 0.5 * (self.last_time + current_time)
+        residual = self._J @ w_dot + np.cross(w_mid, self._J @ w_mid) - self.last_tau
+        self.filtered_residual = (
+            self.residual_filter_alpha * self.filtered_residual
+            + (1.0 - self.residual_filter_alpha) * residual
+        )
+
+        for i in range(3):
+            basis = np.array([
+                np.sin(self.wsin[i] * sample_time),
+                np.cos(self.wsin[i] * sample_time)
+            ])
+            disturbance_hat = self.disturbance_coeff[i] @ basis
+            error = self.filtered_residual[i] - disturbance_hat
+            normalizer = 1.0 + basis @ basis
+            self.disturbance_coeff[i] += self.adaptation_gain * dt * basis * error / normalizer
+            disturbance_hat = self.disturbance_coeff[i] @ basis
+            if abs(self.wsin[i]) < self.low_frequency_threshold:
+                disturbance_hat += self.low_frequency_injection_gain * (
+                    self.filtered_residual[i] - disturbance_hat
+                )
+            self.disturbance_estimate[i] = disturbance_hat
+
+        compensation = -np.clip(
+            self.disturbance_estimate,
+            -self.max_compensation,
+            self.max_compensation
+        )
+
+        self.last_time = current_time
+        self.last_w = w_actual.copy()
+        self.last_tau = tau_without_imc + compensation_gain * compensation
+
+        return compensation.reshape(3, 1)
+
+    def get_observer_state(self):
+        return np.array([
+            self.disturbance_coeff[0, 0], self.disturbance_coeff[0, 1],
+            self.disturbance_coeff[1, 0], self.disturbance_coeff[1, 1],
+            self.disturbance_coeff[2, 0], self.disturbance_coeff[2, 1],
+        ])
     
     
 class AdaptiveFeedbackCompensator:

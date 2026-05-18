@@ -88,6 +88,8 @@ class TrackerPos_1():
             'ipopt.max_iter': 20,
             # 'ipopt.warm_start_init_point': 'yes',
             'ipopt.print_level': 0,
+            'ipopt.sb': 'yes',
+            'print_time': False,
         }
         
         self._nlp_x_x = []
@@ -236,6 +238,8 @@ class TrackerPos_2():
             'ipopt.max_iter': 20,
             # 'ipopt.warm_start_init_point': 'yes',
             'ipopt.print_level': 0,
+            'ipopt.sb': 'yes',
+            'print_time': False,
         }
         
         self._nlp_x_x = []

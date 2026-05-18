@@ -1,7 +1,43 @@
 <launch>
     <arg name="drone_id" default="0"/>
+    <arg name="command_mode" default="rate"/>
+    <arg name="disturbance_case" default="hf_periodic"/>
+    <arg name="disturbance_application" default="input"/>
+    <arg name="disturbance_time_base" default="relative"/>
+    <arg name="disturbance_scale" default="1.0"/>
+    <arg name="disturbance_constant" default="[1.0, 1.0, 1.0]"/>
+    <arg name="disturbance_amplitude" default="[1.0, 2.0, 0.6]"/>
+    <arg name="disturbance_frequency" default="[15.0, 15.0, 16.0]"/>
+    <arg name="disturbance_phase" default="[0.1, 0.2, 0.3]"/>
+    <arg name="disturbance_seed" default="7"/>
+    <arg name="ou_theta" default="[1.0, 1.2, 1.4]"/>
+    <arg name="ou_sigma" default="[1.0, 1.1, 0.6]"/>
+    <arg name="ou_mu" default="[0.0, 0.0, 0.0]"/>
+    <arg name="pink_amplitude" default="[1.0, 2.0, 0.6]"/>
+    <arg name="pink_sources" default="10"/>
+    <arg name="pink_theta_min" default="0.15"/>
+    <arg name="pink_theta_max" default="18.0"/>
+    <arg name="disturbance_clip" default="[2.0, 3.0, 1.2]"/>
 
     <node pkg="px4_bridge" name="q_sim" type="q_sim.py" output="screen">
         <remap from="~thrust_rates" to="/track/thrust_rates" />
+        <param name="command_mode" value="$(arg command_mode)" />
+        <param name="disturbance_case" value="$(arg disturbance_case)" />
+        <param name="disturbance_application" value="$(arg disturbance_application)" />
+        <param name="disturbance_time_base" value="$(arg disturbance_time_base)" />
+        <param name="disturbance_scale" value="$(arg disturbance_scale)" />
+        <param name="disturbance_constant" value="$(arg disturbance_constant)" />
+        <param name="disturbance_amplitude" value="$(arg disturbance_amplitude)" />
+        <param name="disturbance_frequency" value="$(arg disturbance_frequency)" />
+        <param name="disturbance_phase" value="$(arg disturbance_phase)" />
+        <param name="disturbance_seed" value="$(arg disturbance_seed)" />
+        <param name="ou_theta" value="$(arg ou_theta)" />
+        <param name="ou_sigma" value="$(arg ou_sigma)" />
+        <param name="ou_mu" value="$(arg ou_mu)" />
+        <param name="pink_amplitude" value="$(arg pink_amplitude)" />
+        <param name="pink_sources" value="$(arg pink_sources)" />
+        <param name="pink_theta_min" value="$(arg pink_theta_min)" />
+        <param name="pink_theta_max" value="$(arg pink_theta_max)" />
+        <param name="disturbance_clip" value="$(arg disturbance_clip)" />
     </node>
 </launch>

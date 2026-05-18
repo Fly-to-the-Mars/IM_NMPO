@@ -151,7 +151,7 @@ class QuadrotorSimpleModel(object):
         return ca.Function("ddyn_t", [X0, U, dt], [X1], ["X0", "U", "dt"], ["X1"])
 
 class QuadrotorModel_nominal(object):
-    def __init__(self, cfg_f):
+    def __init__(self, cfg_f, imc_wsin=None):
         
         self._m = 1.0         # total mass
         self._arm_l = 0.23    # arm length
@@ -169,6 +169,9 @@ class QuadrotorModel_nominal(object):
         self._vim_max = 1
         self._T_max = 4.179
         self._T_min = 0
+        self._imc_wsin = np.array([0.1, 0.2, 0.2], dtype=float)
+        if imc_wsin is not None:
+          self._imc_wsin = np.array(imc_wsin, dtype=float)
 
         self.load(cfg_f)
         
@@ -265,7 +268,7 @@ class QuadrotorModel_nominal(object):
         tauz = self._c_tau*(T3+T4-T1-T2)
         thrust = (T1+T2+T3+T4)
 
-        wsin = np.array([0.1, 0.2, 0.2])
+        wsin = self._imc_wsin
         # wsin = np.array([0, 0, 0])
         phi = [None] * 3
         psi = np.array([1, 0])

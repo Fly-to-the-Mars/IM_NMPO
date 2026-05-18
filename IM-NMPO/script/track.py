@@ -8,7 +8,6 @@ import atexit
 import matplotlib.pyplot as plt
 from dataclasses import dataclass
 from typing import Optional, Tuple, List, Dict
-from collections import deque
 import ast  # 用于安全地解析字符串为Python对象
 
 # ROS messages
@@ -18,7 +17,8 @@ from nav_msgs.msg import Odometry
 from sensor_msgs.msg import Imu
 
 # Import local modules
-BASEPATH = os.path.abspath(__file__).split('script', 1)[0] + 'script/robust_agile_fly/'
+PACKAGE_PATH = os.path.abspath(__file__).split('script', 1)[0]
+BASEPATH = PACKAGE_PATH + 'script/robust_agile_fly/'
 sys.path.append(BASEPATH)
 
 from quadrotor import QuadrotorModel_nominal, QuadrotorModel
@@ -75,17 +75,54 @@ class TrajectoryTrackerNode:
         self.publish_rate = self._get_param_with_default("~publish_rate", 50)  # Hz
         self.tracking_horizon = self._get_param_with_default("~tracking_horizon", 10)
         self.plot_trajectory = self._get_param_with_default("~plot_trajectory", True)
+        default_plot_output_dir = os.path.join(PACKAGE_PATH, 'fig', 'sim_results')
+        self.plot_output_dir = self._get_param_with_default(
+            "~plot_output_dir",
+            default_plot_output_dir
+        )
+        if self.plot_trajectory:
+            os.makedirs(self.plot_output_dir, exist_ok=True)
         
         # Get IMC parameters safely
         imc_wsin_str = self._get_param_with_default("~imc_wsin", "[0.1, 0.2, 0.2]")
         imc_wsin = self._safe_parse_list_param(imc_wsin_str, [0.1, 0.2, 0.2])
+        self.imc_wsin = imc_wsin
+        self.command_mode = self._get_param_with_default("~command_mode", "torque")
+        self.compensation_mode = self._get_param_with_default("~compensation_mode", "torque")
+        self.imc_compensation_gain = float(self._get_param_with_default("~imc_compensation_gain", 1.0))
+        self.imc_frequency_adaptation = self._safe_parse_bool_param(
+            self._get_param_with_default("~imc_frequency_adaptation", False)
+        )
+        self.imc_fft_window = float(self._get_param_with_default("~imc_fft_window", 4.0))
+        self.imc_fft_update_period = float(self._get_param_with_default("~imc_fft_update_period", 0.5))
+        self.imc_fft_min_frequency = float(self._get_param_with_default("~imc_fft_min_frequency", 0.2))
+        self.imc_fft_max_frequency = float(self._get_param_with_default("~imc_fft_max_frequency", 20.0))
+        self._fft_error_time = []
+        self._fft_error_history = []
+        self._last_fft_update_time = None
+        self._estimated_imc_wsin = imc_wsin.copy()
+        self.model_imc_wsin = imc_wsin
+        if self.command_mode == "rate":
+            self.model_imc_wsin = np.array([0.1, 0.2, 0.2], dtype=float)
+        elif self.compensation_mode == "torque" and np.max(np.abs(imc_wsin)) < 1.0:
+            self.model_imc_wsin = np.zeros_like(imc_wsin)
         
         # Log current configuration
         rospy.loginfo(f"Controller configuration: ctrl_flag={self.ctrl_flag}")
         rospy.loginfo(f"IMC parameters: wsin={imc_wsin}")
+        rospy.loginfo(f"Nominal model IM state frequencies: wsin={self.model_imc_wsin}")
+        rospy.loginfo(f"Command mode: {self.command_mode}")
+        rospy.loginfo(f"Compensation mode: {self.compensation_mode}, gain={self.imc_compensation_gain}")
+        rospy.loginfo(
+            "IMC frequency adaptation: %s, window=%.2fs, update=%.2fs",
+            self.imc_frequency_adaptation,
+            self.imc_fft_window,
+            self.imc_fft_update_period
+        )
+        rospy.loginfo(f"Plot output directory: {self.plot_output_dir}")
         
         # Model initialization
-        self.quad_1 = QuadrotorModel_nominal(BASEPATH + 'quad/quad_real.yaml')
+        self.quad_1 = QuadrotorModel_nominal(BASEPATH + 'quad/quad_real.yaml', imc_wsin=self.model_imc_wsin)
         self.quad_2 = QuadrotorModel(BASEPATH + 'quad/quad_real.yaml')
         
         # Controller initialization
@@ -100,10 +137,8 @@ class TrajectoryTrackerNode:
         self.v_im = np.zeros(6)  # Internal model state
         self.imu_data: Optional[Imu] = None
         self.trajectory_ready = False
+        self.last_rate_cmd: Optional[np.ndarray] = None
         
-        # Performance monitoring
-        self.tracking_errors = deque(maxlen=1000)
-        self.computation_times = deque(maxlen=100)
         self.message_count = 0
         
         # ROS publishers/subscribers
@@ -114,12 +149,19 @@ class TrajectoryTrackerNode:
         self.r_y = []  # Actual y positions
         self.ref_traj_x = []  # Reference trajectory x positions
         self.ref_traj_y = []  # Reference trajectory y positions
+        self._plots_saved = False
         
         # Register cleanup function
-        atexit.register(self._plot_trajectory)
-        rospy.on_shutdown(self._plot_trajectory)
+        atexit.register(self._save_plots)
+        rospy.on_shutdown(self._save_plots)
         
         rospy.loginfo("Trajectory tracking node started, using controller type: %d", self.ctrl_flag)
+
+    def _clip_rate_command(self, w_cmd: np.ndarray, quad) -> np.ndarray:
+        """Respect the same angular-rate limits used by the simulator model."""
+        lower = np.array([-quad._omega_xy_max, -quad._omega_xy_max, -quad._omega_z_max])
+        upper = np.array([quad._omega_xy_max, quad._omega_xy_max, quad._omega_z_max])
+        return np.clip(w_cmd, lower, upper)
     
     def _get_param_with_default(self, param_name, default_value):
         """Safely get parameter with default value"""
@@ -134,8 +176,11 @@ class TrajectoryTrackerNode:
     def _safe_parse_list_param(self, param_str, default_value):
         """Safely parse list parameter from string"""
         try:
+            if isinstance(param_str, (list, tuple, np.ndarray)):
+                return np.array(param_str, dtype=float)
+
             # Remove any extra whitespace
-            param_str = param_str.strip()
+            param_str = str(param_str).strip()
             # Use ast.literal_eval for safe evaluation
             parsed_value = ast.literal_eval(param_str)
             # Ensure it's a list and convert to numpy array
@@ -147,16 +192,89 @@ class TrajectoryTrackerNode:
         except Exception as e:
             rospy.logwarn(f"Failed to parse parameter: {param_str}, error: {e}, using default")
             return np.array(default_value, dtype=float)
+
+    def _safe_parse_bool_param(self, value):
+        """Parse ROS bool params that may arrive as bool, int or string."""
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, (int, float)):
+            return bool(value)
+        return str(value).strip().lower() in ("1", "true", "yes", "on")
+
+    def _maybe_update_imc_frequency(self, rotational_error, current_time):
+        """Estimate effective finite-window IM frequencies from tracking error."""
+        if not self.imc_frequency_adaptation:
+            return
+
+        rotational_error = np.array(rotational_error, dtype=float).flatten()
+        self._fft_error_time.append(current_time)
+        self._fft_error_history.append(rotational_error)
+
+        cutoff = current_time - max(self.imc_fft_window, 0.5)
+        while self._fft_error_time and self._fft_error_time[0] < cutoff:
+            self._fft_error_time.pop(0)
+            self._fft_error_history.pop(0)
+
+        if len(self._fft_error_time) < 32:
+            return
+        if (
+            self._last_fft_update_time is not None
+            and current_time - self._last_fft_update_time < self.imc_fft_update_period
+        ):
+            return
+
+        t = np.array(self._fft_error_time)
+        y = np.array(self._fft_error_history)
+        dt = np.median(np.diff(t))
+        if not np.isfinite(dt) or dt <= 0:
+            return
+
+        freqs = 2.0 * np.pi * np.fft.rfftfreq(len(t), d=dt)
+        mask = (freqs >= self.imc_fft_min_frequency) & (freqs <= self.imc_fft_max_frequency)
+        if not np.any(mask):
+            return
+
+        estimated = self._estimated_imc_wsin.copy()
+        window = np.hanning(len(t))
+        for axis in range(3):
+            signal = y[:, axis] - np.mean(y[:, axis])
+            if np.std(signal) < 1e-4:
+                continue
+            spectrum = np.abs(np.fft.rfft(signal * window)) ** 2
+            spectrum[~mask] = 0.0
+            peak_idx = int(np.argmax(spectrum))
+            if spectrum[peak_idx] > 0.0:
+                estimated[axis] = freqs[peak_idx]
+
+        self._estimated_imc_wsin = 0.65 * self._estimated_imc_wsin + 0.35 * estimated
+        self.imc_compensator.set_frequencies(self._estimated_imc_wsin)
+        self._last_fft_update_time = current_time
+        rospy.loginfo_throttle(
+            2.0,
+            "Sliding-window IM frequencies: [%.2f, %.2f, %.2f] rad/s",
+            self._estimated_imc_wsin[0],
+            self._estimated_imc_wsin[1],
+            self._estimated_imc_wsin[2]
+        )
     
     def _init_controller(self):
         """Initialize controller"""
         if self.ctrl_flag == 1:
             self.tracker = TrackerPos_1(self.quad_1)
-            try:
-                self.tracker.load_so(BASEPATH + "generated/tracker_pos_1.so")
-                rospy.loginfo("SO file loaded successfully")
-            except Exception as e:
-                rospy.logwarn("Failed to load SO file: %s, will use Python implementation", str(e))
+            default_so_wsin = np.array([0.1, 0.2, 0.2], dtype=float)
+            if np.allclose(self.model_imc_wsin, default_so_wsin):
+                try:
+                    self.tracker.load_so(BASEPATH + "generated/tracker_pos_1.so")
+                    rospy.loginfo("SO file loaded successfully")
+                except Exception as e:
+                    rospy.logwarn("Failed to load SO file: %s, will use Python implementation", str(e))
+                    self.tracker.define_opt()
+            else:
+                rospy.logwarn(
+                    "Nominal model IM wsin=%s differs from generated SO wsin=%s; building solver from Python model",
+                    self.model_imc_wsin.tolist(), default_so_wsin.tolist()
+                )
+                self.tracker.define_opt()
         elif self.ctrl_flag == 2:
             self.tracker = TrackerPos_2(self.quad_2)
             self.tracker.define_opt()
@@ -211,8 +329,6 @@ class TrajectoryTrackerNode:
         
     def _odom_callback(self, msg: Odometry):
         """Odometry callback"""
-        start_time = rospy.Time.now()
-        
         try:
             self.current_state = QuadrotorState.from_odometry(msg)
             self.message_count += 1
@@ -226,13 +342,6 @@ class TrajectoryTrackerNode:
                 control_msg = self._compute_control()
                 if control_msg:
                     self.ctrl_pub.publish(control_msg)
-                    
-                    # Monitor performance
-                    comp_time = (rospy.Time.now() - start_time).to_sec()
-                    self.computation_times.append(comp_time)
-                    
-                    if self.message_count % 100 == 0:
-                        self._log_performance()
                         
         except Exception as e:
             rospy.logerr("Error processing odometry data: %s", str(e))
@@ -304,8 +413,11 @@ class TrajectoryTrackerNode:
     
     def _compute_control_type1(self, x0: np.ndarray) -> ThrustRates:
         """Type 1 controller computation"""
+        current_time = rospy.Time.now().to_sec()
+        v_im_current = self.v_im.copy()
+
         # Extend state vector
-        x1 = np.concatenate([x0, self.v_im])
+        x1 = np.concatenate([x0, v_im_current])
         
         # Sample trajectory
         trjp, trjv, trjdt, ploy = self.trajectory.sample(
@@ -317,8 +429,9 @@ class TrajectoryTrackerNode:
         res = self.tracker.solve(x1, ploy.reshape(-1), trjdt)
         x = res['x'].full().flatten()
         
-        # Update internal model state
-        self.v_im = x[13:19]
+        # Store the optimizer's next augmented state for the next control step.
+        v_im_next = x[13:19]
+        self.v_im = v_im_next
         
         # Extract control command
         control_start_idx = self.tracker._Herizon * 19
@@ -326,25 +439,77 @@ class TrajectoryTrackerNode:
                   x[control_start_idx + 1] + 
                   x[control_start_idx + 2] + 
                   x[control_start_idx + 3])
-        
-        # Nominal attitude and angular velocity
-        q_nominal = np.array([float(x[6]), float(x[7]), 
-                             float(x[8]), float(x[9])])
-        w_nominal = np.array([float(x[10]), float(x[11]), float(x[12])])
-        tau_nominal = np.array([x[10], x[11], x[12]])
+
+        # Legacy angular-rate interface: this is the original output form.
+        # x[10:13] is used as the nominal angular-rate command, and the
+        # adaptive/IMC terms are applied as corrections in the same channel.
+        if self.command_mode == "rate":
+            q_nominal = np.array([float(x[6]), float(x[7]),
+                                 float(x[8]), float(x[9])])
+            w_nominal = np.array([float(x[10]), float(x[11]), float(x[12])])
+            tau_nominal = w_nominal.copy()
+
+            q_actual = self.current_state.orientation
+            w_actual = self.current_state.angular_velocity
+
+            adaptive_compensation = self.adaptive_compensator.compute_delta_tau(
+                q_actual, w_actual, q_nominal, w_nominal
+            )
+            self._maybe_update_imc_frequency(w_actual - w_nominal, current_time)
+            imc_compensation = self.imc_compensator.update_rate_internal_model(
+                tau_nominal,
+                w_actual,
+                adaptive_compensation,
+                current_time,
+                self.imc_compensation_gain
+            )
+            imc_compensation = self.imc_compensation_gain * imc_compensation
+            tau_final = tau_nominal + adaptive_compensation + imc_compensation.flatten()
+            w_cmd = self._clip_rate_command(tau_final, self.quad_1)
+            self.last_rate_cmd = w_cmd.copy()
+
+            control_msg = ThrustRates()
+            control_msg.thrust = Tt / (4 * self.quad_1._T_max)
+            control_msg.wx = float(w_cmd[0])
+            control_msg.wy = float(w_cmd[1])
+            control_msg.wz = float(w_cmd[2])
+            return control_msg
+
+        # Current nominal state is initialized from the measured state at each
+        # receding-horizon step. The predicted x[6:13] is the next-step state
+        # and must not be used to form the current adaptive feedback error.
+        q_nominal = np.array([float(x0[6]), float(x0[7]),
+                             float(x0[8]), float(x0[9])])
+        w_nominal = np.array([float(x0[10]), float(x0[11]), float(x0[12])])
         
         # Actual state
         q_actual = self.current_state.orientation
         w_actual = self.current_state.angular_velocity
         
-        # Apply compensation
-        imc_compensation = self.imc_compensator.get_compensation(self.v_im)
+        u0 = x[control_start_idx + 0]
+        u1 = x[control_start_idx + 1]
+        u2 = x[control_start_idx + 2]
+        u3 = x[control_start_idx + 3]
+        tau_nominal = np.array([
+            self.quad_1._arm_l / np.sqrt(2) * (u0 + u3 - u1 - u2),
+            self.quad_1._arm_l / np.sqrt(2) * (u0 + u2 - u1 - u3),
+            self.quad_1._c_tau * (u2 + u3 - u0 - u1)
+        ])
         adaptive_compensation = self.adaptive_compensator.compute_delta_tau(
             q_actual, w_actual, q_nominal, w_nominal
         )
-        
-        # Final torque = nominal torque + internal model compensation + adaptive compensation
-        tau_final = tau_nominal + imc_compensation.flatten() + adaptive_compensation
+        tau_without_imc = tau_nominal + adaptive_compensation
+        if self.compensation_mode == "torque":
+            imc_compensation = self.imc_compensator.update_rotational_internal_model(
+                tau_without_imc,
+                w_actual,
+                current_time,
+                self.imc_compensation_gain
+            )
+        else:
+            imc_compensation = self.imc_compensator.get_compensation(v_im_current)
+        imc_compensation = self.imc_compensation_gain * imc_compensation
+        tau_final = tau_nominal + adaptive_compensation + imc_compensation.flatten()
         
         # Create control message
         control_msg = ThrustRates()
@@ -367,27 +532,35 @@ class TrajectoryTrackerNode:
         res = self.tracker.solve(x0, ploy.reshape(-1), trjdt)
         x = res['x'].full().flatten()
         
-        # Extract control command
-        Tt = 1 * (x[self.tracker._Herizon * 13 + 0] +
-                  x[self.tracker._Herizon * 13 + 1] +
-                  x[self.tracker._Herizon * 13 + 2] +
-                  x[self.tracker._Herizon * 13 + 3])
+        # Extract the first nominal NMPC rotor-thrust command.
+        control_start_idx = self.tracker._Herizon * 13
+        u0 = x[control_start_idx + 0]
+        u1 = x[control_start_idx + 1]
+        u2 = x[control_start_idx + 2]
+        u3 = x[control_start_idx + 3]
+        Tt = 1 * (u0 + u1 + u2 + u3)
+        tau_nominal = np.array([
+            self.quad_2._arm_l / np.sqrt(2) * (u0 + u3 - u1 - u2),
+            self.quad_2._arm_l / np.sqrt(2) * (u0 + u2 - u1 - u3),
+            self.quad_2._c_tau * (u2 + u3 - u0 - u1)
+        ])
         
         # Create control message
         control_msg = ThrustRates()
         control_msg.thrust = Tt / (4 * self.quad_2._T_max)
-        control_msg.wx = float(x[10])
-        control_msg.wy = float(x[11])
-        control_msg.wz = float(x[12])
+        if self.command_mode == "rate":
+            # Legacy cascaded NMPC baseline: send the predicted angular-rate
+            # target to the low-level PID.
+            w_cmd = self._clip_rate_command(np.array([x[10], x[11], x[12]]), self.quad_2)
+            control_msg.wx = float(w_cmd[0])
+            control_msg.wy = float(w_cmd[1])
+            control_msg.wz = float(w_cmd[2])
+        else:
+            control_msg.wx = float(tau_nominal[0])
+            control_msg.wy = float(tau_nominal[1])
+            control_msg.wz = float(tau_nominal[2])
         
         return control_msg
-    
-    def _log_performance(self):
-        """Log performance metrics"""
-        if len(self.computation_times) > 0:
-            avg_time = np.mean(self.computation_times)
-            max_time = np.max(self.computation_times)
-            rospy.loginfo("Computation time - Avg: %.4fs, Max: %.4fs", avg_time, max_time)
     
     def _plot_trajectory(self):
         """Plot and save trajectory"""
@@ -424,12 +597,16 @@ class TrajectoryTrackerNode:
                 
                 # Save figure
                 timestamp = rospy.Time.now().to_sec()
-                save_path = f'/tmp/trajectory_plot_{timestamp:.0f}.png'
+                save_path = os.path.join(
+                    self.plot_output_dir,
+                    f'trajectory_plot_{timestamp:.0f}.png'
+                )
                 plt.savefig(save_path, dpi=300, bbox_inches='tight')
                 rospy.loginfo(f"Trajectory plot saved to: {save_path}")
                 
-                # Show plot
-                plt.show()
+                plt.show(block=False)
+                plt.pause(0.1)
+                plt.close()
                 
             elif len(self.r_x) > 0:
                 rospy.logwarn("Only actual trajectory available for plotting")
@@ -444,12 +621,22 @@ class TrajectoryTrackerNode:
                 plt.grid(True, alpha=0.3)
                 plt.legend(loc='best')
                 plt.axis('equal')
-                plt.show()
+                plt.show(block=False)
+                plt.pause(0.1)
+                plt.close()
             else:
                 rospy.logwarn("No trajectory data to plot")
                 
         except Exception as e:
             rospy.logerr(f"Error plotting trajectory: {str(e)}")
+
+    def _save_plots(self):
+        """Save the trajectory plot once at shutdown."""
+        if self._plots_saved:
+            return
+
+        self._plots_saved = True
+        self._plot_trajectory()
     
     def run(self):
         """Run the node"""

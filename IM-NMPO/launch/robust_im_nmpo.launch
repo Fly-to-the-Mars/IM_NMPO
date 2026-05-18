@@ -1,37 +1,86 @@
 <launch>
     <!-- Controller and IMC parameters configuration -->
-    <arg name="ctrl_flag" default="1" doc="Controller type: 1 for controller 1, 2 for controller 2"/>
-    <arg name="imc_wsin_x" default="0.1" doc="IMC parameter wsin for x-axis"/>
-    <arg name="imc_wsin_y" default="0.2" doc="IMC parameter wsin for y-axis"/>
-    <arg name="imc_wsin_z" default="0.2" doc="IMC parameter wsin for z-axis"/>
+    <arg name="ctrl_flag" default="1" doc="Controller type: 1 for IM-NMPO, 2 for NMPC"/>
+    <arg name="imc_wsin_x" default="15" doc="IMC parameter wsin for x-axis"/>
+    <arg name="imc_wsin_y" default="15" doc="IMC parameter wsin for y-axis"/>
+    <arg name="imc_wsin_z" default="16" doc="IMC parameter wsin for z-axis"/>
+    <arg name="command_mode" default="rate" doc="q_sim command mode: rate uses the legacy angular-rate interface, torque uses direct torque input"/>
+    <arg name="compensation_mode" default="torque" doc="Compensation mode: torque uses tau_nominal + adaptive + IMC"/>
+    <arg name="imc_compensation_gain" default="1.0" doc="Gain for IMC compensation"/>
+    <arg name="disturbance_case" default="hf_periodic" doc="Disturbance case: none, constant, lf_periodic, hf_periodic, ou, pink_noise, or custom_periodic"/>
+    <arg name="disturbance_application" default="input" doc="Disturbance application: input for matched input disturbance, external_torque for direct plant torque"/>
+    <arg name="disturbance_time_base" default="relative" doc="Disturbance time base: relative starts at simulation time zero, absolute uses ROS time"/>
+    <arg name="disturbance_scale" default="1.0" doc="Scale applied to simulated disturbance"/>
+    <arg name="disturbance_constant" default="[1.0, 1.0, 1.0]" doc="Constant disturbance [x,y,z]"/>
+    <arg name="disturbance_amplitude" default="[1.0, 2.0, 0.6]" doc="Periodic disturbance amplitudes [x,y,z]"/>
+    <arg name="disturbance_frequency" default="[15.0, 15.0, 16.0]" doc="Custom periodic disturbance frequencies [x,y,z] rad/s"/>
+    <arg name="disturbance_phase" default="[0.1, 0.2, 0.3]" doc="Periodic disturbance phases [x,y,z] rad"/>
+    <arg name="disturbance_seed" default="7" doc="Random seed for OU and pink-noise disturbances"/>
+    <arg name="ou_theta" default="[1.0, 1.2, 1.4]" doc="OU mean-reversion rates [x,y,z]"/>
+    <arg name="ou_sigma" default="[1.0, 1.1, 0.6]" doc="OU diffusion intensities [x,y,z]"/>
+    <arg name="ou_mu" default="[0.0, 0.0, 0.0]" doc="OU mean values [x,y,z]"/>
+    <arg name="pink_amplitude" default="[1.0, 2.0, 0.6]" doc="Pink-noise amplitude [x,y,z]"/>
+    <arg name="pink_sources" default="10" doc="Number of OU sources used for pink-noise approximation"/>
+    <arg name="pink_theta_min" default="0.15" doc="Minimum OU source rate for pink-noise approximation"/>
+    <arg name="pink_theta_max" default="18.0" doc="Maximum OU source rate for pink-noise approximation"/>
+    <arg name="disturbance_clip" default="[2.0, 3.0, 1.2]" doc="Elementwise clipping for stochastic disturbances"/>
+    <arg name="imc_frequency_adaptation" default="false" doc="Use sliding-window FFT to update IM frequencies for non-harmonic disturbances"/>
+    <arg name="imc_fft_window" default="4.0" doc="FFT window length in seconds"/>
+    <arg name="imc_fft_update_period" default="0.5" doc="FFT frequency update period in seconds"/>
     <arg name="plot_trajectory" default="true" doc="Whether to plot trajectory after shutdown"/>
-    
+    <arg name="plot_output_dir" default="$(find im_nmpo)/fig/sim_results" doc="Directory for saved trajectory plots"/>
+    <arg name="use_rviz" default="true" doc="Whether to start RViz visualization"/>
+
     <!-- Trajectory tracking node with configurable parameters -->
     <node pkg="im_nmpo" name="track" type="track.py" output="screen">
         <remap from="~odom" to="/q_sim/odom" />
         <remap from="~track_traj" to="/optimal_traj/track_traj" />
-        
-        <!-- Controller selection parameter -->
+
         <param name="ctrl_flag" value="$(arg ctrl_flag)" />
-        
-        <!-- IMC parameters as a list -->
         <param name="imc_wsin" value="[$(arg imc_wsin_x), $(arg imc_wsin_y), $(arg imc_wsin_z)]" />
-        
-        <!-- Plot trajectory setting -->
+        <param name="command_mode" value="$(arg command_mode)" />
+        <param name="compensation_mode" value="$(arg compensation_mode)" />
+        <param name="imc_compensation_gain" value="$(arg imc_compensation_gain)" />
+        <param name="imc_frequency_adaptation" value="$(arg imc_frequency_adaptation)" />
+        <param name="imc_fft_window" value="$(arg imc_fft_window)" />
+        <param name="imc_fft_update_period" value="$(arg imc_fft_update_period)" />
         <param name="plot_trajectory" value="$(arg plot_trajectory)" />
+        <param name="plot_output_dir" value="$(arg plot_output_dir)" />
     </node>
 
     <!-- Optimal trajectory generation node -->
     <node pkg="im_nmpo" name="optimal_traj" type="optimal_traj.py" output="screen">
         <remap from="~gates" to="/waypoint_pub/gates" />
     </node>
-    
+
     <!-- Waypoint publisher node -->
     <node pkg="im_nmpo" name="waypoint_pub" type="waypoint_pub.py" output="screen">
         <remap from="~odom" to="/q_sim/odom" />
     </node>
 
     <!-- Simulation and visualization -->
-    <include file="$(find px4_bridge)/launch/q_sim.launch"/>
-    <include file="$(find px4_bridge)/launch/q_visual.launch"/>
+    <include file="$(find px4_bridge)/launch/q_sim.launch">
+        <arg name="command_mode" value="$(arg command_mode)" />
+        <arg name="disturbance_case" value="$(arg disturbance_case)" />
+        <arg name="disturbance_application" value="$(arg disturbance_application)" />
+        <arg name="disturbance_time_base" value="$(arg disturbance_time_base)" />
+        <arg name="disturbance_scale" value="$(arg disturbance_scale)" />
+        <arg name="disturbance_constant" value="$(arg disturbance_constant)" />
+        <arg name="disturbance_amplitude" value="$(arg disturbance_amplitude)" />
+        <arg name="disturbance_frequency" value="$(arg disturbance_frequency)" />
+        <arg name="disturbance_phase" value="$(arg disturbance_phase)" />
+        <arg name="disturbance_seed" value="$(arg disturbance_seed)" />
+        <arg name="ou_theta" value="$(arg ou_theta)" />
+        <arg name="ou_sigma" value="$(arg ou_sigma)" />
+        <arg name="ou_mu" value="$(arg ou_mu)" />
+        <arg name="pink_amplitude" value="$(arg pink_amplitude)" />
+        <arg name="pink_sources" value="$(arg pink_sources)" />
+        <arg name="pink_theta_min" value="$(arg pink_theta_min)" />
+        <arg name="pink_theta_max" value="$(arg pink_theta_max)" />
+        <arg name="disturbance_clip" value="$(arg disturbance_clip)" />
+    </include>
+
+    <group if="$(arg use_rviz)">
+        <include file="$(find px4_bridge)/launch/q_visual.launch"/>
+    </group>
 </launch>

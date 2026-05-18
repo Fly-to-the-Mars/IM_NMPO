@@ -1,0 +1,8 @@
+docker_release/
+docker_results/
+results/
+
+*.tar
+*.tar.gz
+*.tgz
+*.sha256

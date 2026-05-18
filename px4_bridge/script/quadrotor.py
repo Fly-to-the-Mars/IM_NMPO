@@ -329,6 +329,7 @@ class QuadrotorSim(object):
         self._X = np.zeros(13)
         self._X[6] = 1
         self._T = np.zeros(4)
+        self._direct_tau = np.zeros(3)
         
         self._pid_wx = PID(15, 0.2, 0, 8, 8)
         self._pid_wy = PID(15, 0.2, 0, 8, 8)
@@ -343,30 +344,55 @@ class QuadrotorSim(object):
     def get_state(self):
       return self._X+np.random.uniform(-1, 1, 13)*np.array([0.0, 0.0, 0.0, 0.08, 0.08, 0.08, 0, 0, 0, 0, 0.1, 0.1, 0.1])
     
-    # [thrust, wx, wy, wz]
-    def low_ctrl(self, U):
-        wx = self._X[10]
-        wy = self._X[11]
-        wz = self._X[12]
-        Tx = self._pid_wx.update(U[1]-wx)
-        Ty = self._pid_wy.update(U[2]-wy)
-        Tz = self._pid_wz.update(U[3]-wz)
-        
-        T1 = U[0] + Tx + Ty - Tz
-        T2 = U[0] - Tx - Ty - Tz
-        T3 = U[0] - Tx + Ty + Tz
-        T4 = U[0] + Tx - Ty + Tz
+    def _mix_torque_command(self, thrust_per_rotor, taux, tauy, tauz):
+        mix = np.array([
+            [1.0, 1.0, 1.0, 1.0],
+            [self._quad._arm_l / np.sqrt(2), -self._quad._arm_l / np.sqrt(2),
+             -self._quad._arm_l / np.sqrt(2), self._quad._arm_l / np.sqrt(2)],
+            [self._quad._arm_l / np.sqrt(2), -self._quad._arm_l / np.sqrt(2),
+             self._quad._arm_l / np.sqrt(2), -self._quad._arm_l / np.sqrt(2)],
+            [-self._quad._c_tau, -self._quad._c_tau,
+             self._quad._c_tau, self._quad._c_tau],
+        ])
+        rhs = np.array([4.0 * thrust_per_rotor, taux, tauy, tauz])
+        return np.linalg.solve(mix, rhs)
+
+    # [thrust, wx, wy, wz] in rate mode, [thrust, taux, tauy, tauz] in torque mode.
+    def low_ctrl(self, U, command_mode="rate"):
+        if command_mode == "torque":
+            # Direct torque-input mode for the paper model:
+            # use equal rotor thrust for translation and inject the commanded
+            # torque directly into the rotational dynamics in step1ms().
+            T1 = T2 = T3 = T4 = U[0]
+            self._direct_tau = np.array(U[1:4], dtype=float).flatten()
+        else:
+            self._direct_tau = np.zeros(3)
+            wx = self._X[10]
+            wy = self._X[11]
+            wz = self._X[12]
+            Tx = self._pid_wx.update(U[1]-wx)
+            Ty = self._pid_wy.update(U[2]-wy)
+            Tz = self._pid_wz.update(U[3]-wz)
+
+            T1 = U[0] + Tx + Ty - Tz
+            T2 = U[0] - Tx - Ty - Tz
+            T3 = U[0] - Tx + Ty + Tz
+            T4 = U[0] + Tx - Ty + Tz
         
         self._T[0] = constrain(T1, self._T_min, self._T_max+1)
         self._T[1] = constrain(T2, self._T_min, self._T_max+1)
         self._T[2] = constrain(T3, self._T_min, self._T_max+1)
         self._T[3] = constrain(T4, self._T_min, self._T_max+1)
     
-    # [thrust, wx, wy, wz]
-    def step10ms(self, U):
+    # [thrust, wx, wy, wz] in rate mode, [thrust, taux, tauy, tauz] in torque mode.
+    def step10ms(self, U, command_mode="rate", external_tau=None):
+        if external_tau is None:
+            external_tau = np.zeros(3)
+        else:
+            external_tau = np.array(external_tau, dtype=float).flatten()
         for i in range(10):
-            self.low_ctrl(U)
-            self.step1ms()
+            self.low_ctrl(U, command_mode)
+            self.step1ms(external_tau)
     
 #
 #   T1    T3
@@ -376,9 +402,11 @@ class QuadrotorSim(object):
 #     /  \
 #   T4    T2
 #
-    def step1ms(self):
+    def step1ms(self, external_tau=None):
         X_ = self._dyn_d(self._X, self._T)
         self._X = X_.full().flatten()
+        if external_tau is not None:
+            self._X[10:13] += (self._quad._J_inv @ (self._direct_tau + external_tau)) * 0.001
         # ground contact
         if self._X[2] > 0:
           self._X[2] = 0
