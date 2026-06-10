@@ -1,4 +1,4 @@
-# Robust Optimal Planning and Control for Agile Flight of Quadrotors: An Internal Model-Based Nonlinear Model Predictive Optimization Approach
+# Internal Model-Based Nonlinear Model Predictive Optimization for Robust Agile Quadrotor Flight
 
 <p align="center">
   <img src="IM-NMPO/fig/Framework_review.png" width="60%" alt="IM-NMPO Framework">
@@ -6,121 +6,90 @@
 
 <em>Figure 1: (A) IM-NMPO framework. (B) Simulation and real-world experiments encompassing various disturbances, including unknown payloads, unknown persistent fan-induced and time-varying gusts, across quadrotors with different wheelbases (450mm, 330mm, and 250mm).</em>
 
-## Environment
+## Reproduce With Docker
 
-Tested on Ubuntu 20.04 with ROS Noetic.
 
-Required Python package:
+Docker is the recommended path. ROS Noetic and the required Python packages are
+included in the Docker image.
 
-```bash
-pip3 install casadi==3.6.5
-```
+This repository reproduces the simulation comparison between:
 
-## Build From Source
+- `ctrl_flag:=1`: the proposed IM-NMPO controller.
+- `ctrl_flag:=2`: the NMPC baseline.
 
-Clone the repository into a catkin workspace and build it:
+Default reproduced case:
 
-```bash
-mkdir -p ~/im_nmpo_ws/src
-cd ~/im_nmpo_ws/src
-git clone <repository-url> IM_NMPO
-cd ~/im_nmpo_ws
-catkin_make
-source devel/setup.bash
-```
+- command interface: angular-rate command, `command_mode:=rate`
+- disturbance: high-frequency periodic input disturbance, `disturbance_case:=hf_periodic`
+- output: trajectory plots saved in `docker_results`
 
-## Run A Comparison
-
-The launch file exposes the same command interface for both controllers:
-
-- `ctrl_flag:=1`: IM-NMPO
-- `ctrl_flag:=2`: NMPC
-- `command_mode:=rate`: angular-rate command interface
-- `disturbance_case:=none`: no disturbance
-- `disturbance_case:=constant`: constant torque disturbance
-- `disturbance_case:=lf_periodic`: low-frequency periodic torque disturbance
-- `disturbance_case:=hf_periodic`: high-frequency periodic torque disturbance
-- `disturbance_case:=ou`: Ornstein-Uhlenbeck stochastic torque disturbance
-- `disturbance_case:=pink_noise`: pink-noise torque disturbance
-
-Run IM-NMPO under the high-frequency periodic disturbance:
+## 1. Clone The Repository
 
 ```bash
-roslaunch im_nmpo robust_im_nmpo.launch \
-  ctrl_flag:=1 command_mode:=rate \
-  disturbance_case:=hf_periodic \
-  disturbance_application:=input disturbance_time_base:=relative \
-  use_rviz:=true plot_trajectory:=true
+git clone https://github.com/Fly-to-the-Mars/IM_NMPO.git
+cd IM_NMPO
 ```
 
-Run the NMPC baseline under the same condition:
+Run all remaining commands from this repository root.
+
+## 2. Prepare The Docker Image
+
+Choose one of the following two options.
+
+### Option A: Use The Release Image Archive
+
+Use this option if the GitHub release provides the prebuilt Docker image archive.
+It is faster than building the image locally.
+
+Download the Docker image archive:
 
 ```bash
-roslaunch im_nmpo robust_im_nmpo.launch \
-  ctrl_flag:=2 command_mode:=rate \
-  disturbance_case:=hf_periodic \
-  disturbance_application:=input disturbance_time_base:=relative \
-  use_rviz:=true plot_trajectory:=true
+wget -O im-nmpo_noetic.gz \
+  https://github.com/Fly-to-the-Mars/IM_NMPO/releases/latest/download/im-nmpo_noetic.gz
+
+wget -O im-nmpo_noetic.gz.sha256 \
+  https://github.com/Fly-to-the-Mars/IM_NMPO/releases/latest/download/im-nmpo_noetic.gz.sha256
 ```
 
-Stop each launch with `Ctrl-C` after the simulated trajectory finishes. A
-trajectory plot is saved to:
+Then run:
+
+```bash
+sha256sum -c im-nmpo_noetic.gz.sha256
+docker load -i im-nmpo_noetic.gz
+docker image ls im-nmpo
+```
+
+Expected result:
 
 ```text
-IM-NMPO/fig/sim_results/trajectory_plot_<timestamp>.png
+im-nmpo_noetic.gz: OK
+Loaded image: im-nmpo:noetic
 ```
 
-For headless runs, disable RViz and keep trajectory plotting enabled:
+### Option B: Build The Docker Image Locally
+
+Use this option if no image archive is available, or if you prefer to build from
+the Dockerfile.
 
 ```bash
-roslaunch im_nmpo robust_im_nmpo.launch \
-  ctrl_flag:=1 command_mode:=rate \
-  disturbance_case:=lf_periodic \
-  disturbance_application:=input disturbance_time_base:=relative \
-  use_rviz:=false plot_trajectory:=true
+docker build -t im-nmpo:noetic -f docker/Dockerfile .
 ```
 
-For OU and pink-noise disturbances, IM-NMPO can update the effective internal
-model frequency online from recent rotational tracking-error data:
-
-```bash
-roslaunch im_nmpo robust_im_nmpo.launch \
-  ctrl_flag:=1 command_mode:=rate \
-  disturbance_case:=ou \
-  imc_frequency_adaptation:=true \
-  disturbance_application:=input disturbance_time_base:=relative \
-  use_rviz:=false plot_trajectory:=true
-```
-
-To compare another disturbance case, keep the controller arguments unchanged
-and replace only `disturbance_case`.
-
-## Docker
-
-The repository includes a Docker environment with ROS Noetic and all required
-simulation dependencies.
-
-### Load An Image Archive
-
-If an image archive is provided with a release, load it locally:
-
-```bash
-sha256sum -c im-nmpo_noetic_<date>.tar.gz.sha256
-docker load -i im-nmpo_noetic_<date>.tar.gz
-```
-
-The image is tagged as:
+This installs ROS Noetic, Python dependencies, and builds the catkin workspace
+inside the image. A successful build ends with an image tagged as:
 
 ```text
 im-nmpo:noetic
 ```
 
-Run IM-NMPO in the container and write plots to a host directory:
+## 3. Run IM-NMPO
+
+Run the proposed IM-NMPO controller:
 
 ```bash
 mkdir -p docker_results
 
-docker run --rm -it --net=host \
+timeout --foreground -s INT 45s docker run --rm --net=host \
   -v "$PWD/docker_results:/root/im_nmpo_ws/results" \
   im-nmpo:noetic \
   roslaunch im_nmpo robust_im_nmpo.launch \
@@ -128,13 +97,16 @@ docker run --rm -it --net=host \
     disturbance_case:=hf_periodic \
     disturbance_application:=input disturbance_time_base:=relative \
     use_rviz:=false plot_trajectory:=true \
-    plot_output_dir:=/root/im_nmpo_ws/results
+    plot_output_dir:=/root/im_nmpo_ws/results \
+  || test $? -eq 124
 ```
 
-Run the NMPC baseline by changing `ctrl_flag:=2`:
+## 4. Run The NMPC Baseline
+
+Run the NMPC baseline under the same disturbance:
 
 ```bash
-docker run --rm -it --net=host \
+timeout --foreground -s INT 45s docker run --rm --net=host \
   -v "$PWD/docker_results:/root/im_nmpo_ws/results" \
   im-nmpo:noetic \
   roslaunch im_nmpo robust_im_nmpo.launch \
@@ -142,53 +114,168 @@ docker run --rm -it --net=host \
     disturbance_case:=hf_periodic \
     disturbance_application:=input disturbance_time_base:=relative \
     use_rviz:=false plot_trajectory:=true \
-    plot_output_dir:=/root/im_nmpo_ws/results
+    plot_output_dir:=/root/im_nmpo_ws/results \
+  || test $? -eq 124
 ```
 
-The saved trajectory plots appear in `docker_results`.
+## 5. Check The Results
 
-### Build The Image
-
-From the repository root:
+After both runs, list the saved plots:
 
 ```bash
-docker build -t im-nmpo:noetic -f docker/Dockerfile .
+ls -lh docker_results
 ```
 
-### Export The Image
-
-After building the image, create a compressed archive and checksum:
-
-```bash
-./docker/export_image.sh im-nmpo:noetic docker_release
-```
-
-This creates:
+Expected result:
 
 ```text
-docker_release/im-nmpo_noetic_<date>.tar.gz
-docker_release/im-nmpo_noetic_<date>.tar.gz.sha256
+trajectory_plot_1781011412.png
+trajectory_plot_1781011475.png
 ```
 
-## Launch Parameters
+There should be one plot from IM-NMPO and one plot from the NMPC baseline. Your
+filenames will have different timestamps.
 
-Commonly used arguments in `robust_im_nmpo.launch`:
+## 6. Run Other Disturbance Cases
 
-- `plot_trajectory:=true`: save a trajectory tracking plot at shutdown.
-- `plot_output_dir:=<path>`: choose where trajectory plots are saved.
-- `use_rviz:=true`: start RViz visualization.
-- `disturbance_scale:=<value>`: scale the simulated disturbance magnitude.
-- `disturbance_seed:=<int>`: set the random seed for stochastic disturbances.
-- `imc_wsin_x`, `imc_wsin_y`, `imc_wsin_z`: set the internal-model frequencies
-  for the three rotational axes.
+To reproduce a different disturbance, keep the command unchanged and replace
+only `disturbance_case:=hf_periodic`.
 
-The disturbance source is implemented in `px4_bridge/script/q_sim.py`, and the
+Available disturbance cases:
+
+```text
+none
+constant
+lf_periodic
+hf_periodic
+ou
+pink_noise
+```
+
+For example, to run IM-NMPO under an Ornstein-Uhlenbeck stochastic disturbance
+with online internal-model frequency adaptation:
+
+```bash
+timeout --foreground -s INT 45s docker run --rm --net=host \
+  -v "$PWD/docker_results:/root/im_nmpo_ws/results" \
+  im-nmpo:noetic \
+  roslaunch im_nmpo robust_im_nmpo.launch \
+    ctrl_flag:=1 command_mode:=rate \
+    disturbance_case:=ou \
+    imc_frequency_adaptation:=true \
+    disturbance_application:=input disturbance_time_base:=relative \
+    use_rviz:=false plot_trajectory:=true \
+    plot_output_dir:=/root/im_nmpo_ws/results \
+  || test $? -eq 124
+```
+
+## Optional: Build And Run Without Docker
+
+This path is only for users who already have Ubuntu 20.04 and ROS Noetic
+installed locally.
+
+Install the Python dependency:
+
+```bash
+pip3 install casadi==3.6.5
+```
+
+Build in a catkin workspace:
+
+```bash
+mkdir -p ~/im_nmpo_ws/src
+cd ~/im_nmpo_ws/src
+git clone https://github.com/Fly-to-the-Mars/IM_NMPO.git
+cd ~/im_nmpo_ws
+catkin_make
+source devel/setup.bash
+```
+
+Run IM-NMPO without RViz:
+
+```bash
+roslaunch im_nmpo robust_im_nmpo.launch \
+  ctrl_flag:=1 command_mode:=rate \
+  disturbance_case:=hf_periodic \
+  disturbance_application:=input disturbance_time_base:=relative \
+  use_rviz:=false plot_trajectory:=true
+```
+
+Wait 20-45 s, then press `Ctrl-C`. The plot is saved to:
+
+```text
+IM-NMPO/fig/sim_results/trajectory_plot_1781011412.png
+```
+
+Run the NMPC baseline by changing `ctrl_flag:=1` to `ctrl_flag:=2`.
+
+## Important Launch Parameters
+
+- `ctrl_flag:=1`: proposed IM-NMPO controller.
+- `ctrl_flag:=2`: NMPC baseline.
+- `command_mode:=rate`: angular-rate command interface.
+- `disturbance_case:=hf_periodic`: disturbance scenario used in the default
+  comparison.
+- `plot_trajectory:=true`: save the trajectory plot at shutdown.
+- `plot_output_dir:=/root/im_nmpo_ws/results`: output directory for saved plots
+  inside Docker.
+- `use_rviz:=false`: headless mode, recommended for Docker.
+- `imc_frequency_adaptation:=true`: update internal-model frequencies online
+  for stochastic disturbances.
+
+The disturbance source is implemented in `px4_bridge/script/q_sim.py`. The
 controller logic is implemented in `IM-NMPO/script/track.py` and
 `IM-NMPO/script/robust_agile_fly/internal_model.py`.
 
+## Troubleshooting
+
+If Docker says permission denied:
+
+```bash
+sudo docker --version
+```
+
+If `sudo docker --version` works, either prepend `sudo` to the Docker commands
+or configure Docker so your user can run Docker without `sudo`.
+
+If `sha256sum -c ...` fails, make sure both downloaded release files are in the
+same directory and that you are running the command from that directory.
+
+If Docker reports that port `11311` is already in use, stop any existing
+`roscore` or `roslaunch` process on the host, then rerun the command.
+
+If no plot appears, check that the command includes:
+
+```text
+plot_trajectory:=true
+plot_output_dir:=/root/im_nmpo_ws/results
+-v "$PWD/docker_results:/root/im_nmpo_ws/results"
+```
+
+## Maintainer: Export The Docker Image
+
+The Docker image archive is not committed to git. Upload these two files as
+GitHub Release assets:
+
+```text
+docker_release/im-nmpo_noetic.gz
+docker_release/im-nmpo_noetic.gz.sha256
+```
+
+To regenerate them after rebuilding `im-nmpo:noetic`, run:
+
+```bash
+./docker/export_image.sh im-nmpo:noetic docker_release
+mv docker_release/im-nmpo_noetic_*.tar.gz docker_release/im-nmpo_noetic.gz
+(cd docker_release && sha256sum im-nmpo_noetic.gz > im-nmpo_noetic.gz.sha256)
+rm -f docker_release/im-nmpo_noetic_*.tar.gz.sha256
+```
+
+Then upload the two files above to the GitHub Release page.
+
 ## Example Tracking Results
 
-The following examples illustrate the visual comparison produced by the
+The following figures illustrate the visual comparison produced by the
 simulation.
 
 For periodic torque disturbances, `px4_bridge/script/q_sim.py` injects matched
@@ -207,7 +294,7 @@ Trajectory tracking subject to periodic external disturbances:
   <br>
   <em>Figure 2: The proposed IM-NMPO (left) and the NMPC baseline (right).</em>
 </p>
- 
+
 For constant torque disturbances, the same simulator applies:
 
 ```python

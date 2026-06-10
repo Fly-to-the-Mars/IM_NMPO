@@ -39,17 +39,22 @@ class TrajectoryPublisher:
             TRAJ_TOPIC, 
             TrackTraj, 
             tcp_nodelay=True, 
-            queue_size=1
+            queue_size=1,
+            latch=True
         )
         
         self.path_pub = rospy.Publisher(
             PATH_TOPIC,
             Path,
-            queue_size=10
+            queue_size=10,
+            latch=True
         )
+
+        self._trajectory_published = False
+        self._trigger_sub = None
         
         # Subscribe to trigger message
-        rospy.Subscriber(
+        self._trigger_sub = rospy.Subscriber(
             "~gates",
             TrackTraj,
             self.trajectory_callback,
@@ -218,6 +223,10 @@ class TrajectoryPublisher:
         Args:
             msg: Trigger message (unused, but required by ROS subscriber)
         """
+        if self._trajectory_published:
+            rospy.logdebug("Trajectory already published; ignoring repeated trigger")
+            return
+
         rospy.loginfo("Received trigger message, publishing trajectory from CSV...")
         
         # Construct CSV file path
@@ -233,6 +242,11 @@ class TrajectoryPublisher:
         if not self.publish_trajectory(trajectory_data):
             rospy.logerr("Failed to publish trajectory")
             return
+
+        self._trajectory_published = True
+        if self._trigger_sub is not None:
+            self._trigger_sub.unregister()
+            self._trigger_sub = None
         
         # Publish path for visualization
         if not self.publish_path_visualization(trajectory_data):
