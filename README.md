@@ -4,6 +4,8 @@ Robust Optimal Agile Flight of Quadrotors: An Internal Model-Based Nonlinear Mod
 
 <p align="center">
   <img src="IM-NMPO/fig/Framework_review.png" width="70%" alt="IM-NMPO framework">
+  <br>
+  <em>Figure 1: (A) IM-NMPO framework. (B) Simulation and real-world experiments encompassing various disturbances, including unknown payloads, unknown persistent fan-induced and time-varying gusts, across quadrotors with different wheelbases (450mm, 330mm, and 250mm).</em>
 </p>
 
 This repository contains the ROS simulation code for reproducing the agile
