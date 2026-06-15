@@ -1,7 +1,7 @@
 <launch>
     <arg name="drone_id" default="0"/>
     <arg name="command_mode" default="rate"/>
-    <arg name="disturbance_case" default="hf_periodic"/>
+    <arg name="disturbance_case" default="lf_periodic"/>
     <arg name="disturbance_application" default="input"/>
     <arg name="disturbance_time_base" default="relative"/>
     <arg name="disturbance_scale" default="1.0"/>

@@ -7,7 +7,7 @@
     <arg name="command_mode" default="rate" doc="q_sim command mode: rate uses the legacy angular-rate interface, torque uses direct torque input"/>
     <arg name="compensation_mode" default="torque" doc="Compensation mode: torque uses tau_nominal + adaptive + IMC"/>
     <arg name="imc_compensation_gain" default="1.0" doc="Gain for IMC compensation"/>
-    <arg name="disturbance_case" default="hf_periodic" doc="Disturbance case: none, constant, lf_periodic, hf_periodic, ou, pink_noise, or custom_periodic"/>
+    <arg name="disturbance_case" default="lf_periodic" doc="Disturbance case: none, constant, lf_periodic, hf_periodic, ou, pink_noise, or custom_periodic"/>
     <arg name="disturbance_application" default="input" doc="Disturbance application: input for matched input disturbance, external_torque for direct plant torque"/>
     <arg name="disturbance_time_base" default="relative" doc="Disturbance time base: relative starts at simulation time zero, absolute uses ROS time"/>
     <arg name="disturbance_scale" default="1.0" doc="Scale applied to simulated disturbance"/>

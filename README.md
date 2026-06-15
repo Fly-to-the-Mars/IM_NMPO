@@ -1,6 +1,6 @@
-<h1 align="center">
+<h2 align="center">
 Robust Optimal Agile Flight of Quadrotors: An Internal Model-Based Nonlinear Model Predictive Optimization Approach
-</h1>
+</h2>
 
 <p align="center">
   <img src="IM-NMPO/fig/Framework_review.png" width="70%" alt="IM-NMPO framework">
@@ -9,13 +9,15 @@ Robust Optimal Agile Flight of Quadrotors: An Internal Model-Based Nonlinear Mod
 This repository contains the ROS simulation code for reproducing the agile
 quadrotor tracking experiments of the IM-NMPO method.
 
-The default reproduction compares:
+The main reproduction compares:
 
 - `ctrl_flag:=1`: proposed IM-NMPO controller
 - `ctrl_flag:=2`: NMPC baseline
 
-under the high-frequency periodic input disturbance setting
-`disturbance_case:=hf_periodic`.
+under two disturbance settings:
+
+- `disturbance_case:=constant`: constant input disturbance
+- `disturbance_case:=lf_periodic`: low-frequency periodic input disturbance
 
 ## Project Overview
 
@@ -85,45 +87,44 @@ catkin_make
 source devel/setup.bash
 ```
 
-## Reproduce The Default Simulation
+## Reproduce The Main Simulation Cases
 
-The default setting uses angular-rate commands and a high-frequency periodic
-matched input disturbance.
+The main simulation results are obtained by running both controllers under
+constant and low-frequency periodic matched input disturbances.
 
 ### Docker
 
-Run the proposed IM-NMPO controller:
+The command below runs all four combinations and saves the plots under
+`docker_results/`.
 
 ```bash
-mkdir -p docker_results/im_nmpo
+run_case() {
+  case_name="$1"
+  ctrl_flag="$2"
+  method_name="$3"
+  out_dir="$PWD/docker_results/${case_name}/${method_name}"
 
-timeout --foreground -s INT 45s docker run --rm --net=host \
-  -v "$PWD/docker_results/im_nmpo:/root/im_nmpo_ws/results" \
-  im-nmpo:noetic \
-  roslaunch im_nmpo robust_im_nmpo.launch \
-    ctrl_flag:=1 command_mode:=rate \
-    disturbance_case:=hf_periodic \
-    disturbance_application:=input disturbance_time_base:=relative \
-    use_rviz:=false plot_trajectory:=true \
-    plot_output_dir:=/root/im_nmpo_ws/results \
-  || test $? -eq 124
-```
+  mkdir -p "$out_dir"
+  rm -f "$out_dir"/trajectory_plot_*.png
 
-Run the NMPC baseline:
+  timeout --foreground -s INT 45s docker run --rm \
+    -v "$out_dir:/root/im_nmpo_ws/results" \
+    im-nmpo:noetic \
+    roslaunch im_nmpo robust_im_nmpo.launch \
+      ctrl_flag:="$ctrl_flag" command_mode:=rate \
+      disturbance_case:="$case_name" \
+      disturbance_application:=input disturbance_time_base:=relative \
+      use_rviz:=false plot_trajectory:=true \
+      plot_output_dir:=/root/im_nmpo_ws/results \
+    || test $? -eq 124
 
-```bash
-mkdir -p docker_results/nmpc
+  test -n "$(find "$out_dir" -maxdepth 1 -name 'trajectory_plot_*.png' -print -quit)"
+}
 
-timeout --foreground -s INT 45s docker run --rm --net=host \
-  -v "$PWD/docker_results/nmpc:/root/im_nmpo_ws/results" \
-  im-nmpo:noetic \
-  roslaunch im_nmpo robust_im_nmpo.launch \
-    ctrl_flag:=2 command_mode:=rate \
-    disturbance_case:=hf_periodic \
-    disturbance_application:=input disturbance_time_base:=relative \
-    use_rviz:=false plot_trajectory:=true \
-    plot_output_dir:=/root/im_nmpo_ws/results \
-  || test $? -eq 124
+run_case constant 1 im_nmpo
+run_case constant 2 nmpc
+run_case lf_periodic 1 im_nmpo
+run_case lf_periodic 2 nmpc
 ```
 
 The Docker plots are written to:
@@ -138,19 +139,41 @@ find docker_results -name 'trajectory_plot_*.png' -print
 source ~/IM_NMPO_ws/devel/setup.bash
 ```
 
-Run the proposed IM-NMPO controller:
+Run the following commands one at a time.
+
+IM-NMPO under constant disturbance:
 
 ```bash
-roslaunch im_nmpo robust_im_nmpo.launch
+roslaunch im_nmpo robust_im_nmpo.launch \
+  ctrl_flag:=1 \
+  disturbance_case:=constant
 ```
 
-Run the NMPC baseline:
+NMPC under constant disturbance:
 
 ```bash
-roslaunch im_nmpo robust_im_nmpo.launch ctrl_flag:=2
+roslaunch im_nmpo robust_im_nmpo.launch \
+  ctrl_flag:=2 \
+  disturbance_case:=constant
 ```
 
-For terminal-only execution, add `use_rviz:=false`.
+IM-NMPO under low-frequency periodic disturbance:
+
+```bash
+roslaunch im_nmpo robust_im_nmpo.launch \
+  ctrl_flag:=1 \
+  disturbance_case:=lf_periodic
+```
+
+NMPC under low-frequency periodic disturbance:
+
+```bash
+roslaunch im_nmpo robust_im_nmpo.launch \
+  ctrl_flag:=2 \
+  disturbance_case:=lf_periodic
+```
+
+For terminal-only execution, add `use_rviz:=false` to any command above.
 
 The local plots are written to:
 
@@ -161,7 +184,8 @@ find ~/IM_NMPO_ws/src/IM_NMPO/IM-NMPO/fig/sim_results \
 
 ## Disturbance Cases
 
-Replace `disturbance_case:=hf_periodic` with one of:
+The main reproduction uses `constant` and `lf_periodic`. Additional cases are
+available for ablation runs:
 
 ```text
 none
@@ -172,16 +196,6 @@ ou
 pink_noise
 ```
 
-Example:
-
-```bash
-roslaunch im_nmpo robust_im_nmpo.launch \
-  ctrl_flag:=1 \
-  command_mode:=rate \
-  disturbance_case:=ou \
-  imc_frequency_adaptation:=true
-```
-
 ## Launch Parameters
 
 | Parameter | Description |
@@ -189,7 +203,8 @@ roslaunch im_nmpo robust_im_nmpo.launch \
 | `ctrl_flag:=1` | proposed IM-NMPO controller |
 | `ctrl_flag:=2` | NMPC baseline |
 | `command_mode:=rate` | angular-rate command interface |
-| `disturbance_case:=hf_periodic` | default disturbance scenario |
+| `disturbance_case:=constant` | constant input disturbance |
+| `disturbance_case:=lf_periodic` | low-frequency periodic input disturbance |
 | `disturbance_application:=input` | matched input disturbance |
 | `disturbance_time_base:=relative` | disturbance timing relative to trajectory start |
 | `imc_frequency_adaptation:=true` | online frequency adaptation for non-harmonic disturbances |

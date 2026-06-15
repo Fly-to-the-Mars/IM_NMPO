@@ -11,7 +11,7 @@ devel/
 install/
 logs/
 results/
-docker_results/
+docker_results*/
 docker_release/
 
 IM-NMPO/fig/sim_results/*

@@ -54,7 +54,7 @@ def thrust_rates_cb(msg:ThrustRates):
 thrust_rates_sub = rospy.Subscriber("~thrust_rates", ThrustRates, callback=thrust_rates_cb, queue_size=1, tcp_nodelay=True)
 # wind_pub = rospy.Publisher('wind_speed', Float32, queue_size=1)
 command_mode = rospy.get_param("~command_mode", "torque")
-disturbance_case = rospy.get_param("~disturbance_case", "hf_periodic")
+disturbance_case = rospy.get_param("~disturbance_case", "lf_periodic")
 disturbance_application = rospy.get_param("~disturbance_application", "input")
 disturbance_time_base = rospy.get_param("~disturbance_time_base", "absolute")
 disturbance_scale = float(rospy.get_param("~disturbance_scale", 1.0))
@@ -162,6 +162,9 @@ def get_disturbance(t):
 def sim_run(e):
     # rospy.loginfo("run")
     global thrust_rates_msg, cnt
+    if rospy.is_shutdown():
+        return
+
     now = rospy.Time.now().to_sec()
     if disturbance_time_base.strip().lower() in ("absolute", "ros", "wall"):
         t = now
@@ -226,7 +229,12 @@ def sim_run(e):
         odom_msg.twist.twist.angular.x = q_state[10]
         odom_msg.twist.twist.angular.y = q_state[11]
         odom_msg.twist.twist.angular.z = q_state[12]
-        odom_pub.publish(odom_msg)
+        try:
+            odom_pub.publish(odom_msg)
+        except rospy.ROSException as exc:
+            if not rospy.is_shutdown() and "closed topic" not in str(exc):
+                raise
+            return
 
         if cnt%3 == 0:
             tf_br.sendTransform((q_state[1],q_state[0],-q_state[2]), (q_state[8],q_state[7],-q_state[9],q_state[6]), rospy.Time.now(), "quad_body", "world")
@@ -235,5 +243,8 @@ def sim_run(e):
 
 timer = rospy.Timer(rospy.Duration(0.01), sim_run, oneshot=False, reset=False)
 
-rospy.spin()
+try:
+    rospy.spin()
+finally:
+    timer.shutdown()
 rospy.loginfo("ROS: Goodby")
